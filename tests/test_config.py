@@ -24,6 +24,6 @@ def test_settings_model_paths_are_derived_from_persistence_root():
 
 def test_create_app_registers_health_routes():
     app = create_app(Settings())
-    route_paths = {route.path for route in app.routes}
+    route_paths = {route.path for route in app.routes if hasattr(route, "path")}
     assert "/health/live" in route_paths
     assert "/health/ready" in route_paths
