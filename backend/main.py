@@ -3,7 +3,12 @@ from datetime import timedelta
 from fastapi import FastAPI
 
 from api.session import router as session_router
+from api.websocket import router as websocket_router
+from agent.agent import AgentPolicy
 from backend.config import Settings, get_settings
+from lip.fake import FakeLipReader
+from lip.inference import LipInferenceEngine
+from llm.minicpm import FakeMiniCPMInterpreter
 from session.manager import SessionManager
 
 
@@ -17,7 +22,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         window_frames=app_settings.window_frames,
         inference_stride=app_settings.inference_stride,
     )
+    app.state.lip_engine = LipInferenceEngine(
+        [
+            FakeLipReader(model="avhubert", language="en", text="turn on the light", confidence=0.72),
+            FakeLipReader(model="cmlr", language="zh", text="请打开灯", confidence=0.76),
+        ]
+    )
+    app.state.semantic_interpreter = FakeMiniCPMInterpreter(threshold=app_settings.model_confidence_threshold)
+    app.state.agent_policy = AgentPolicy(threshold=app_settings.model_confidence_threshold)
     app.include_router(session_router)
+    app.include_router(websocket_router)
 
     @app.get("/health/live")
     async def live() -> dict[str, str]:
