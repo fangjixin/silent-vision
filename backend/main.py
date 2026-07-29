@@ -26,12 +26,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         window_frames=app_settings.window_frames,
         inference_stride=app_settings.inference_stride,
     )
-    app.state.lip_engine = LipInferenceEngine(
-        [
+    if app_settings.model_backend == "real":
+        from lip.avhubert import AVHuBERTLipReader
+        from lip.cmlr import CMLRLipReader
+
+        readers = [AVHuBERTLipReader(app_settings), CMLRLipReader(app_settings)]
+    else:
+        readers = [
             FakeLipReader(model="avhubert", language="en", text="turn on the light", confidence=0.72),
             FakeLipReader(model="cmlr", language="zh", text="请打开灯", confidence=0.76),
         ]
-    )
+    app.state.lip_engine = LipInferenceEngine(readers)
     app.state.semantic_interpreter = FakeMiniCPMInterpreter(threshold=app_settings.model_confidence_threshold)
     app.state.agent_policy = AgentPolicy(threshold=app_settings.model_confidence_threshold)
     app.state.face_detector = create_face_detector(app_settings)
