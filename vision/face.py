@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from io import BytesIO
+from typing import Protocol
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
@@ -46,6 +47,11 @@ class FaceDetectionResult:
     face_count: int
 
 
+class FaceDetectorProtocol(Protocol):
+    def detect(self, image_rgb: np.ndarray) -> FaceDetectionResult:
+        raise NotImplementedError
+
+
 def decode_jpeg_frame(data: bytes, settings: Settings) -> np.ndarray:
     if len(data) > settings.max_jpeg_bytes:
         raise FrameDecodeError(ErrorCode.FRAME_TOO_LARGE, "jpeg payload exceeds MAX_JPEG_BYTES")
@@ -87,3 +93,18 @@ class FaceDetector:
             point = faces[0].landmark[index]
             landmarks.append((float(point.x), float(point.y)))
         return FaceDetectionResult(face_detected=True, landmarks=landmarks, face_count=1)
+
+
+class FakeFaceDetector:
+    def detect(self, image_rgb: np.ndarray) -> FaceDetectionResult:
+        return FaceDetectionResult(
+            face_detected=True,
+            face_count=1,
+            landmarks=[(0.45, 0.55), (0.55, 0.55), (0.50, 0.62), (0.50, 0.50)],
+        )
+
+
+def create_face_detector(settings: Settings) -> FaceDetectorProtocol:
+    if settings.model_backend == "fake":
+        return FakeFaceDetector()
+    return FaceDetector()

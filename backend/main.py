@@ -13,6 +13,7 @@ from lip.fake import FakeLipReader
 from lip.inference import LipInferenceEngine
 from llm.minicpm import FakeMiniCPMInterpreter
 from session.manager import SessionManager
+from vision.face import create_face_detector
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -33,6 +34,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.semantic_interpreter = FakeMiniCPMInterpreter(threshold=app_settings.model_confidence_threshold)
     app.state.agent_policy = AgentPolicy(threshold=app_settings.model_confidence_threshold)
+    app.state.face_detector = create_face_detector(app_settings)
     app.include_router(session_router)
     app.include_router(websocket_router)
     frontend_dir = Path(__file__).resolve().parent.parent / "frontend"

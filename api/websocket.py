@@ -119,8 +119,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 await _send_error(websocket, session_id, "frame", exc.code, str(exc), True)
                 continue
 
-            landmarks = [(0.45, 0.55), (0.55, 0.55), (0.50, 0.62), (0.50, 0.50)]
-            crop = crop_mouth(image, landmarks, settings.mouth_size)
+            detection = websocket.app.state.face_detector.detect(image)
+            if not detection.face_detected:
+                code = ErrorCode.MULTIPLE_FACES if detection.face_count > 1 else ErrorCode.FACE_NOT_FOUND
+                await _send_error(
+                    websocket,
+                    session_id,
+                    "vision",
+                    code,
+                    "current frame does not contain exactly one clear face",
+                    True,
+                )
+                continue
+            crop = crop_mouth(image, detection.landmarks, settings.mouth_size)
             frame = MouthFrame(sequence=sequence, received_at_ms=received_at_ms, image=crop.image)
             window = active.add_mouth_frame(frame)
             await websocket.send_json(

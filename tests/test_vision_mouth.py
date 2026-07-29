@@ -4,7 +4,7 @@ import pytest
 from backend.config import Settings
 from backend.schemas import ErrorCode
 from tests.conftest import make_jpeg
-from vision.face import FrameDecodeError, decode_jpeg_frame
+from vision.face import FakeFaceDetector, FrameDecodeError, create_face_detector, decode_jpeg_frame
 from vision.mouth import crop_mouth
 
 
@@ -31,3 +31,16 @@ def test_crop_mouth_returns_normalized_box_and_96_image():
     assert 0.0 <= result.box.y <= 1.0
     assert result.box.width > 0
     assert result.box.height > 0
+
+
+def test_fake_face_detector_returns_one_face():
+    detector = FakeFaceDetector()
+    result = detector.detect(np.full((200, 300, 3), 128, dtype=np.uint8))
+    assert result.face_detected is True
+    assert result.face_count == 1
+    assert len(result.landmarks) >= 4
+
+
+def test_create_face_detector_uses_fake_backend_by_default():
+    detector = create_face_detector(Settings(model_backend="fake"))
+    assert isinstance(detector, FakeFaceDetector)
