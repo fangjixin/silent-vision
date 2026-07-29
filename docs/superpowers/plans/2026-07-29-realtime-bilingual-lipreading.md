@@ -561,13 +561,14 @@ git commit -m "chore: add project foundation and schemas"
 
 **Files:**
 - Create: `session/manager.py`
+- Create: `lip/base.py`
 - Create: `api/session.py`
 - Modify: `backend/main.py`
 - Create: `tests/test_session_manager.py`
 
 **Interfaces:**
 - Consumes: `Settings`, `ErrorCode`.
-- Produces: `SessionManager.create_pending_session() -> CreatedSession`, `SessionManager.activate(session_id: str) -> ActiveSession`, `SessionManager.disconnect(session_id: str) -> None`, `POST /api/sessions`.
+- Produces: minimal `MouthFrame`, `MouthWindow`, `SessionManager.create_pending_session() -> CreatedSession`, `SessionManager.activate(session_id: str) -> ActiveSession`, `SessionManager.disconnect(session_id: str) -> None`, `POST /api/sessions`.
 
 - [ ] **Step 1: Write failing session manager and API tests**
 
@@ -631,6 +632,40 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'session.manager'`.
 - [ ] **Step 3: Implement session manager and API route**
 
 ```python
+# lip/base.py
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Protocol
+
+import numpy as np
+
+from backend.schemas import LipReadingCandidate
+
+
+@dataclass(frozen=True)
+class MouthFrame:
+    sequence: int
+    received_at_ms: int
+    image: np.ndarray
+
+
+@dataclass(frozen=True)
+class MouthWindow:
+    session_id: str
+    start_sequence: int
+    end_sequence: int
+    frames: Sequence[MouthFrame]
+
+
+class LipReader(Protocol):
+    name: str
+    language: str
+
+    def predict(self, window: MouthWindow) -> LipReadingCandidate:
+        raise NotImplementedError
+```
+
+```python
 # session/manager.py
 from collections import deque
 from dataclasses import dataclass, field
@@ -674,24 +709,6 @@ class ActiveSession:
         self.last_inference_frame_count = 0
         self.latest_pending_window = None
         self.streaming = True
-
-    def add_mouth_frame(self, frame: MouthFrame) -> MouthWindow | None:
-        if len(self.frames) == self.window_frames:
-            self.frames.popleft()
-        self.frames.append(frame)
-        self.accepted_frame_count += 1
-        if len(self.frames) < self.window_frames:
-            return None
-        if self.accepted_frame_count - self.last_inference_frame_count < self.inference_stride:
-            return None
-        self.last_inference_frame_count = self.accepted_frame_count
-        snapshot = tuple(self.frames)
-        return MouthWindow(
-            session_id=self.session_id,
-            start_sequence=snapshot[0].sequence,
-            end_sequence=snapshot[-1].sequence,
-            frames=snapshot,
-        )
 
 
 class SessionManager:
@@ -780,7 +797,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add session/manager.py api/session.py backend/main.py tests/test_session_manager.py
+git add lip/base.py session/manager.py api/session.py backend/main.py tests/test_session_manager.py
 git commit -m "feat: add anonymous session lifecycle"
 ```
 
@@ -789,7 +806,7 @@ git commit -m "feat: add anonymous session lifecycle"
 ### Task 3: Mouth Frame Types and Buffer Scheduling
 
 **Files:**
-- Create: `lip/base.py`
+- Modify: `lip/base.py`
 - Modify: `session/manager.py`
 - Modify: `tests/test_session_manager.py`
 
@@ -838,7 +855,7 @@ def test_next_window_appears_after_25_more_valid_frames():
 
 Run: `pytest tests/test_session_manager.py::test_first_window_appears_at_75_valid_frames tests/test_session_manager.py::test_next_window_appears_after_25_more_valid_frames -v`
 
-Expected: FAIL if `lip.base` or frame scheduling is missing.
+Expected: FAIL with `AttributeError: 'ActiveSession' object has no attribute 'add_mouth_frame'`.
 
 - [ ] **Step 3: Implement mouth frame dataclasses**
 
@@ -880,6 +897,27 @@ class LipReader(Protocol):
 
     def predict(self, window: MouthWindow) -> LipReadingCandidate:
         raise NotImplementedError
+```
+
+```python
+# session/manager.py addition inside ActiveSession
+    def add_mouth_frame(self, frame: MouthFrame) -> MouthWindow | None:
+        if len(self.frames) == self.window_frames:
+            self.frames.popleft()
+        self.frames.append(frame)
+        self.accepted_frame_count += 1
+        if len(self.frames) < self.window_frames:
+            return None
+        if self.accepted_frame_count - self.last_inference_frame_count < self.inference_stride:
+            return None
+        self.last_inference_frame_count = self.accepted_frame_count
+        snapshot = tuple(self.frames)
+        return MouthWindow(
+            session_id=self.session_id,
+            start_sequence=snapshot[0].sequence,
+            end_sequence=snapshot[-1].sequence,
+            frames=snapshot,
+        )
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
