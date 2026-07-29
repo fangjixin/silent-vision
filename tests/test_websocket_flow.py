@@ -42,3 +42,11 @@ def test_second_active_websocket_gets_server_busy(app):
             error = second.receive_json()
             assert error["type"] == "error"
             assert error["code"] == "SERVER_BUSY"
+
+
+def test_frontend_index_is_served(app):
+    client = TestClient(app)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Silent Vision" in response.text
+    assert "startButton" in response.text

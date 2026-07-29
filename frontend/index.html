@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Silent Vision</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="app">
+    <section class="preview" aria-label="Camera preview">
+      <video id="cameraPreview" autoplay playsinline muted></video>
+      <canvas id="overlayCanvas"></canvas>
+      <canvas id="captureCanvas" hidden></canvas>
+    </section>
+    <section class="panel" aria-label="Runtime status">
+      <h1>Silent Vision</h1>
+      <div class="controls">
+        <button id="startButton" type="button">Start</button>
+        <button id="stopButton" type="button" disabled>Stop</button>
+      </div>
+      <dl id="statusList">
+        <dt>Camera</dt><dd id="cameraStatus">idle</dd>
+        <dt>WebSocket</dt><dd id="socketStatus">idle</dd>
+        <dt>Vision</dt><dd id="visionStatus">waiting</dd>
+        <dt>Buffer</dt><dd id="bufferStatus">0 / 75</dd>
+        <dt>Lip</dt><dd id="lipStatus">waiting</dd>
+        <dt>MiniCPM</dt><dd id="semanticStatus">waiting</dd>
+        <dt>Agent</dt><dd id="agentStatus">waiting</dd>
+      </dl>
+      <h2>Candidates</h2>
+      <pre id="candidateOutput"></pre>
+      <h2>Result</h2>
+      <pre id="resultOutput"></pre>
+    </section>
+  </main>
+  <script type="module" src="/static/websocket.js"></script>
+</body>
+</html>

@@ -1,6 +1,9 @@
 from datetime import timedelta
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from api.session import router as session_router
 from api.websocket import router as websocket_router
@@ -32,6 +35,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.agent_policy = AgentPolicy(threshold=app_settings.model_confidence_threshold)
     app.include_router(session_router)
     app.include_router(websocket_router)
+    frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+
+    @app.get("/")
+    async def index() -> FileResponse:
+        return FileResponse(frontend_dir / "index.html")
 
     @app.get("/health/live")
     async def live() -> dict[str, str]:
