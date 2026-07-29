@@ -13,6 +13,12 @@ class MouthFrame:
     received_at_ms: int
     image: np.ndarray
 
+    def __post_init__(self) -> None:
+        if self.image.shape != (96, 96):
+            raise ValueError("mouth frame image must have shape (96, 96)")
+        if self.image.dtype != np.uint8:
+            raise ValueError("mouth frame image must use uint8")
+
 
 @dataclass(frozen=True)
 class MouthWindow:

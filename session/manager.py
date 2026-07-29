@@ -41,6 +41,24 @@ class ActiveSession:
         self.latest_pending_window = None
         self.streaming = True
 
+    def add_mouth_frame(self, frame: MouthFrame) -> MouthWindow | None:
+        if len(self.frames) == self.window_frames:
+            self.frames.popleft()
+        self.frames.append(frame)
+        self.accepted_frame_count += 1
+        if len(self.frames) < self.window_frames:
+            return None
+        if self.accepted_frame_count - self.last_inference_frame_count < self.inference_stride:
+            return None
+        self.last_inference_frame_count = self.accepted_frame_count
+        snapshot = tuple(self.frames)
+        return MouthWindow(
+            session_id=self.session_id,
+            start_sequence=snapshot[0].sequence,
+            end_sequence=snapshot[-1].sequence,
+            frames=snapshot,
+        )
+
 
 class SessionManager:
     def __init__(self, pending_ttl: timedelta, window_frames: int, inference_stride: int) -> None:
