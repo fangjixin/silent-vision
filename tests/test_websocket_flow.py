@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from backend.config import Settings
+from backend.main import create_app
 from tests.conftest import make_jpeg
 
 
@@ -50,3 +52,15 @@ def test_frontend_index_is_served(app):
     assert response.status_code == 200
     assert "Silent Vision" in response.text
     assert "startButton" in response.text
+
+
+def test_websocket_allows_wildcard_origin():
+    app = create_app(Settings(model_backend="fake", allowed_origins="*"))
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+
+    with client.websocket_connect(
+        f"/ws/{session_id}",
+        headers={"origin": "https://rc-b80bfa02edcceefa.radeon.firstdg.ai"},
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "session.ready"

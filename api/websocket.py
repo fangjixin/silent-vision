@@ -1,4 +1,5 @@
 import json
+import logging
 import shutil
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from vision.face import FrameDecodeError, decode_jpeg_frame
 from vision.mouth import crop_mouth
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _event(event_type: str, session_id: str, **payload: object) -> dict[str, object]:
@@ -58,15 +60,27 @@ def _metrics(active: Any) -> dict[str, object]:
     }
 
 
+def _origin_allowed(origin: str, allowed_origins: set[str]) -> bool:
+    return not origin or "*" in allowed_origins or origin in allowed_origins
+
+
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     settings = websocket.app.state.settings
     origin = websocket.headers.get("origin", "")
-    if origin and origin not in settings.allowed_origin_set:
+    allowed_origins = settings.allowed_origin_set
+    if not _origin_allowed(origin, allowed_origins):
+        logger.warning(
+            "websocket origin rejected session_id=%s origin=%s allowed_origins=%s",
+            session_id,
+            origin,
+            sorted(allowed_origins),
+        )
         await websocket.close(code=1008)
         return
 
     await websocket.accept()
+    logger.info("websocket accepted session_id=%s origin=%s", session_id, origin)
     try:
         active = websocket.app.state.session_manager.activate(session_id)
     except ServerBusyError:
