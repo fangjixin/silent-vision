@@ -19,3 +19,27 @@ ssh -L 8000:127.0.0.1:8000 user@rocm-server
 ```
 
 Open `http://localhost:8000` from the machine with the camera.
+
+## Persistence layout
+
+```text
+/workspace/persistence/silent-vision/
+├── models/
+│   ├── avhubert/model.pt
+│   ├── cmlr/model.pth
+│   ├── cmlr/language-model.pth
+│   └── minicpm-o-4_5/
+├── cache/
+├── reports/
+└── logs/
+```
+
+## ROCm container
+
+```bash
+mkdir -p /workspace/persistence/silent-vision/models/{avhubert,cmlr,minicpm-o-4_5}
+mkdir -p /workspace/persistence/silent-vision/cache/{huggingface,torch}
+mkdir -p /workspace/persistence/silent-vision/reports/{benchmarks,diagnostics}
+mkdir -p /workspace/persistence/silent-vision/logs
+docker compose -f docker/docker-compose.yml up --build
+```
