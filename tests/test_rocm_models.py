@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 
 from backend.config import Settings
+from backend.schemas import LipReadingCandidate
 from lip.avhubert import AVHuBERTLipReader
 from lip.cmlr import CMLRLipReader
+from llm.minicpm import RealMiniCPMInterpreter
 from tests.test_lip_inference import _window
 
 pytestmark = [pytest.mark.rocm, pytest.mark.model_integration]
@@ -43,3 +45,14 @@ def test_cmlr_reader_smoke_predicts_chinese_candidate():
     assert candidate.model == "cmlr"
     assert candidate.language == "zh"
     assert isinstance(candidate.text, str)
+
+
+def test_real_minicpm_smoke_schema():
+    settings = Settings(model_backend="real")
+    interpreter = RealMiniCPMInterpreter(settings)
+    result = interpreter.interpret(
+        [LipReadingCandidate(model="cmlr", language="zh", text="请打开灯", confidence=0.7, latencyMs=1)],
+        [],
+        {"frames": 75},
+    )
+    assert result.language in {"zh", "en", "unknown"}

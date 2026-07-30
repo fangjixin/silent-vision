@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from backend.schemas import ErrorCode, ErrorEvent, utc_now
+from backend.schemas import ErrorCode, ErrorEvent, SemanticResult, utc_now
 from lip.base import MouthFrame
 from session.manager import ServerBusyError, SessionError
 from vision.face import FrameDecodeError, decode_jpeg_frame
@@ -162,21 +162,48 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     endSequence=window.end_sequence,
                 )
             )
-            lip_result = websocket.app.state.lip_engine.predict(window)
-            await websocket.send_json(
-                _event(
-                    "lip.candidates",
-                    session_id,
-                    candidates=[candidate.model_dump() for candidate in lip_result.candidates],
-                    degradedModels=lip_result.degradedModels,
+            async with websocket.app.state.inference_lock:
+                lip_result = websocket.app.state.lip_engine.predict(window)
+                await websocket.send_json(
+                    _event(
+                        "lip.candidates",
+                        session_id,
+                        candidates=[candidate.model_dump() for candidate in lip_result.candidates],
+                        degradedModels=lip_result.degradedModels,
+                    )
                 )
-            )
-            sampled = [frame.image for frame in window.frames[::15]]
-            semantic = websocket.app.state.semantic_interpreter.interpret(
-                lip_result.candidates,
-                sampled,
-                {"frames": len(window.frames)},
-            )
+                if not lip_result.candidates:
+                    await _send_error(
+                        websocket,
+                        session_id,
+                        "lip",
+                        ErrorCode.LIP_MODELS_FAILED,
+                        "both lip reading models failed",
+                        True,
+                    )
+                    continue
+                sampled = [frame.image for frame in window.frames[::15]]
+                try:
+                    semantic = websocket.app.state.semantic_interpreter.interpret(
+                        lip_result.candidates,
+                        sampled,
+                        {"frames": len(window.frames)},
+                    )
+                except Exception:
+                    await _send_error(
+                        websocket,
+                        session_id,
+                        "minicpm",
+                        ErrorCode.MINICPM_FAILED,
+                        "MiniCPM failed to produce valid semantic JSON",
+                        True,
+                    )
+                    semantic = SemanticResult(
+                        language="unknown",
+                        text="",
+                        confidence=0.0,
+                        reason="MiniCPM failure",
+                    )
             await websocket.send_json(_event("semantic.result", session_id, **semantic.model_dump()))
             agent = websocket.app.state.agent_policy.decide(semantic)
             await websocket.send_json(

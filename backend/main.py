@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from agent.agent import AgentPolicy
 from backend.config import Settings, get_settings
 from lip.fake import FakeLipReader
 from lip.inference import LipInferenceEngine
-from llm.minicpm import FakeMiniCPMInterpreter
+from llm.minicpm import build_minicpm_interpreter
 from session.manager import SessionManager
 from vision.face import create_face_detector
 
@@ -37,7 +38,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             FakeLipReader(model="cmlr", language="zh", text="请打开灯", confidence=0.76),
         ]
     app.state.lip_engine = LipInferenceEngine(readers)
-    app.state.semantic_interpreter = FakeMiniCPMInterpreter(threshold=app_settings.model_confidence_threshold)
+    app.state.inference_lock = asyncio.Lock()
+    app.state.semantic_interpreter = build_minicpm_interpreter(app_settings)
     app.state.agent_policy = AgentPolicy(threshold=app_settings.model_confidence_threshold)
     app.state.face_detector = create_face_detector(app_settings)
     app.include_router(session_router)

@@ -3,8 +3,9 @@ import pytest
 from pydantic import ValidationError
 
 from agent.agent import AgentPolicy
+from backend.config import Settings
 from backend.schemas import LipReadingCandidate, SemanticResult
-from llm.minicpm import FakeMiniCPMInterpreter, parse_minicpm_json
+from llm.minicpm import FakeMiniCPMInterpreter, build_minicpm_interpreter, parse_minicpm_json
 
 
 def test_parse_minicpm_json_accepts_strict_object():
@@ -45,3 +46,8 @@ def test_agent_policy_has_no_side_effect_actions():
     assert action.action == "respond"
     assert action.arguments == {}
     assert action.requiresConfirmation is False
+
+
+def test_build_minicpm_uses_fake_by_default():
+    interpreter = build_minicpm_interpreter(Settings(model_backend="fake"))
+    assert isinstance(interpreter, FakeMiniCPMInterpreter)
