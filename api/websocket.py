@@ -1,5 +1,7 @@
 import json
+import shutil
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -38,6 +40,22 @@ def _parse_command(raw: str) -> str | None:
         return None
     command_type = loaded.get("type")
     return command_type if isinstance(command_type, str) else None
+
+
+def _cleanup_temp(session_id: str) -> None:
+    temp_dir = Path("/tmp/silent-vision") / session_id
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+
+
+def _metrics(active: Any) -> dict[str, object]:
+    total = max(1, active.accepted_frame_count)
+    return {
+        "receivedFps": 0.0,
+        "validFrameRatio": min(1.0, len(active.frames) / total),
+        "bufferedFrames": len(active.frames),
+        "droppedFrames": 0,
+    }
 
 
 @router.websocket("/ws/{session_id}")
@@ -151,6 +169,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     requiredFrames=settings.window_frames,
                 )
             )
+            await websocket.send_json(_event("metrics.update", session_id, **_metrics(active)))
             if window is None:
                 continue
 
@@ -213,3 +232,4 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         websocket.app.state.session_manager.disconnect(session_id)
     finally:
         websocket.app.state.session_manager.disconnect(session_id)
+        _cleanup_temp(session_id)
