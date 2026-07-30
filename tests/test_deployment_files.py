@@ -13,3 +13,12 @@ def test_dockerfile_does_not_copy_model_weights():
     dockerfile = Path("docker/Dockerfile").read_text()
     assert "COPY . /app" in dockerfile
     assert "models/" not in dockerfile
+
+
+def test_smoke_scripts_exist_and_are_executable():
+    fake = Path("scripts/smoke_fake.sh")
+    rocm = Path("scripts/smoke_rocm.sh")
+    assert fake.exists()
+    assert rocm.exists()
+    assert fake.read_text().startswith("#!/usr/bin/env bash")
+    assert rocm.read_text().startswith("#!/usr/bin/env bash")

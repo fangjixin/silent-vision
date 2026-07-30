@@ -43,3 +43,25 @@ mkdir -p /workspace/persistence/silent-vision/reports/{benchmarks,diagnostics}
 mkdir -p /workspace/persistence/silent-vision/logs
 docker compose -f docker/docker-compose.yml up --build
 ```
+
+## Verification
+
+Default fake mode:
+
+```bash
+./scripts/smoke_fake.sh
+```
+
+ROCm/model mode on the Radeon 7900 server:
+
+```bash
+./scripts/smoke_rocm.sh
+```
+
+For the browser path, forward the service:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 user@rocm-server
+```
+
+Then open `http://localhost:8000` on the local machine that has the camera.
