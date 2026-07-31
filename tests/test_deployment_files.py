@@ -22,3 +22,5 @@ def test_smoke_scripts_exist_and_are_executable():
     assert rocm.exists()
     assert fake.read_text().startswith("#!/usr/bin/env bash")
     assert rocm.read_text().startswith("#!/usr/bin/env bash")
+    assert "Visual_Speech_Recognition_for_Multiple_Languages" in rocm.read_text()
+    assert "models/avhubert/model.pt" not in rocm.read_text()

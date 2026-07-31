@@ -13,14 +13,14 @@ from tests.test_lip_inference import _window
 pytestmark = [pytest.mark.rocm, pytest.mark.model_integration]
 
 
-def test_avhubert_checkpoint_exists_before_loading():
+def test_english_mpc001_config_exists_before_loading():
     settings = Settings(model_backend="real")
-    assert settings.avhubert_checkpoint.exists(), settings.avhubert_checkpoint
+    assert settings.mpc001_english_config_path.exists(), settings.mpc001_english_config_path
 
 
-def test_cmlr_checkpoint_exists_before_loading():
+def test_chinese_mpc001_config_exists_before_loading():
     settings = Settings(model_backend="real")
-    assert settings.cmlr_checkpoint.exists(), settings.cmlr_checkpoint
+    assert settings.mpc001_chinese_config_path.exists(), settings.mpc001_chinese_config_path
 
 
 def test_test_media_manifest_schema_example_is_valid():

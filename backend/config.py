@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     enable_model_health: bool = False
+    mpc001_repo_dir: Path | None = None
+    mpc001_python: str = "python"
+    mpc001_gpu_idx: int = 0
+    mpc001_timeout_seconds: int = Field(default=120, ge=1)
+    mpc001_english_config: Path | None = None
+    mpc001_chinese_config: Path | None = None
+    mpc001_runner_path: Path | None = None
 
     @property
     def avhubert_checkpoint(self) -> Path:
@@ -40,6 +47,24 @@ class Settings(BaseSettings):
     @property
     def minicpm_model_path(self) -> Path:
         return self.persistence_root / "models" / "minicpm-o-4_5"
+
+    @property
+    def mpc001_repo_path(self) -> Path:
+        return self.mpc001_repo_dir or (
+            self.persistence_root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages"
+        )
+
+    @property
+    def mpc001_english_config_path(self) -> Path:
+        return self.mpc001_english_config or (self.mpc001_repo_path / "configs" / "LRS3_V_WER19.1.ini")
+
+    @property
+    def mpc001_chinese_config_path(self) -> Path:
+        return self.mpc001_chinese_config or (self.mpc001_repo_path / "configs" / "CMLR_V_WER8.0.ini")
+
+    @property
+    def mpc001_mouth_runner_path(self) -> Path:
+        return self.mpc001_runner_path or (Path(__file__).resolve().parent.parent / "scripts" / "mpc001_mouth_infer.py")
 
     @property
     def allowed_origin_set(self) -> set[str]:

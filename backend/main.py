@@ -21,7 +21,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
     app = FastAPI(title="Silent Vision")
     app.state.settings = app_settings
-    app.state.models = {"backend": app_settings.model_backend, "ready": app_settings.model_backend == "fake"}
+    app.state.models = {"backend": app_settings.model_backend, "ready": False}
     app.state.session_manager = SessionManager(
         pending_ttl=timedelta(seconds=30),
         window_frames=app_settings.window_frames,
@@ -42,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.semantic_interpreter = build_minicpm_interpreter(app_settings)
     app.state.agent_policy = AgentPolicy(threshold=app_settings.model_confidence_threshold)
     app.state.face_detector = create_face_detector(app_settings)
+    app.state.models["ready"] = True
     app.include_router(session_router)
     app.include_router(websocket_router)
     frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
