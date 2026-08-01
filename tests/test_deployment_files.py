@@ -20,20 +20,26 @@ def test_smoke_scripts_exist_and_are_executable():
     rocm = Path("scripts/smoke_rocm.sh")
     setup = Path("scripts/setup_amd_real.sh")
     start = Path("scripts/start_real_rocm.sh")
+    oneclick = Path("scripts/amd_real_oneclick.sh")
     assert fake.exists()
     assert rocm.exists()
     assert setup.exists()
     assert start.exists()
+    assert oneclick.exists()
     assert fake.read_text().startswith("#!/usr/bin/env bash")
     assert rocm.read_text().startswith("#!/usr/bin/env bash")
     assert setup.read_text().startswith("#!/usr/bin/env bash")
     assert start.read_text().startswith("#!/usr/bin/env bash")
+    assert oneclick.read_text().startswith("#!/usr/bin/env bash")
     assert "Visual_Speech_Recognition_for_Multiple_Languages" in rocm.read_text()
     assert "models/avhubert/model.pt" not in rocm.read_text()
     assert "/opt/venv/bin/python" in setup.read_text()
     assert "/opt/venv/bin/python" in start.read_text()
     assert "/workspace/persistent/silent-vision" in setup.read_text()
     assert "/workspace/persistent/silent-vision" in start.read_text()
+    assert "scripts/setup_amd_real.sh" in oneclick.read_text()
+    assert "scripts/start_real_rocm.sh" in oneclick.read_text()
+    assert "rc-tunnel" not in oneclick.read_text()
 
 
 def test_frontend_stream_lifecycle_cleans_up_between_starts():
@@ -51,3 +57,15 @@ def test_real_mode_suppresses_noisy_third_party_warnings():
     assert "image_processor_class argument is deprecated" in minicpm
     assert "Using a slow image processor" in minicpm
     assert "SymbolDatabase.GetPrototype" in face
+
+
+def test_requirements_use_current_compatible_real_mode_versions():
+    requirements = Path("requirements.txt").read_text()
+    assert "fastapi>=0.141.1,<1.0.0" in requirements
+    assert "uvicorn[standard]>=0.52.0,<1.0.0" in requirements
+    assert "pydantic>=2.13.4,<3.0.0" in requirements
+    assert "transformers==4.51.0" in requirements
+    assert "minicpmo-utils>=1.0.6,<2.0.0" in requirements
+    assert "librosa>=0.11.0,<1.0.0" in requirements
+    assert "soundfile>=0.14.0,<1.0.0" in requirements
+    assert "torch" not in requirements

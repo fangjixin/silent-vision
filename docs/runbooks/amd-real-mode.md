@@ -33,6 +33,17 @@ cd /workspace/template-repos/template-907/repo
 bash scripts/start_real_rocm.sh
 ```
 
+## One-command setup and start
+
+To run setup and then start the server in one terminal:
+
+```bash
+cd /workspace/template-repos/template-907/repo
+bash scripts/amd_real_oneclick.sh
+```
+
+This script does not expose the public tunnel. Keep the tunnel command in a separate terminal.
+
 Expected startup signs:
 
 ```text

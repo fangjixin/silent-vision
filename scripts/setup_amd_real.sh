@@ -11,7 +11,8 @@ export TORCH_HOME=${TORCH_HOME:-$SV_ROOT/cache/torch}
 mkdir -p "$SV_ROOT/downloads" "$SV_ROOT/extract" "$SV_ROOT/repos" "$SV_ROOT/logs"
 mkdir -p "$SV_ROOT/models/minicpm-o-4_5" "$HF_HOME" "$TORCH_HOME"
 
-"$PYTHON_BIN" - <<'PY'
+check_rocm_python() {
+  "$PYTHON_BIN" - <<'PY'
 import sys
 import torch
 
@@ -23,6 +24,9 @@ print("device count:", torch.cuda.device_count())
 if torch.version.hip is None or not torch.cuda.is_available():
     raise SystemExit("ROCm PyTorch is not available in this Python environment")
 PY
+}
+
+check_rocm_python
 
 apt-get update || true
 DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates git aria2
@@ -30,10 +34,8 @@ update-ca-certificates || true
 command -v aria2c
 
 "$PYTHON_BIN" -m pip install --upgrade pip
-"$PYTHON_BIN" -m pip install -r requirements.txt
-"$PYTHON_BIN" -m pip install -U librosa soundfile
-"$PYTHON_BIN" -m pip uninstall -y mediapipe
-"$PYTHON_BIN" -m pip install --no-cache-dir "mediapipe==0.10.14"
+"$PYTHON_BIN" -m pip install --upgrade -r requirements.txt
+check_rocm_python
 
 "$PYTHON_BIN" - <<'PY'
 import mediapipe as mp
@@ -80,6 +82,34 @@ import zipfile
 root = Path(os.environ["SV_ROOT"])
 repo = root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages"
 
+def config_paths(config_file: Path) -> dict[str, Path]:
+    cfg = configparser.ConfigParser()
+    cfg.read(config_file)
+    result = {}
+    for key in ["model_path", "model_conf", "rnnlm", "rnnlm_conf"]:
+        value = cfg.get("model", key, fallback="")
+        if value:
+            result[key] = repo / value
+    return result
+
+lrs3_paths = config_paths(repo / "configs" / "LRS3_V_WER19.1.ini")
+cmlr_paths = config_paths(repo / "configs" / "CMLR_V_WER8.0.ini")
+
+required = [
+    lrs3_paths["model_path"],
+    lrs3_paths["model_conf"],
+    lrs3_paths["rnnlm"],
+    lrs3_paths["rnnlm_conf"],
+    cmlr_paths["model_path"],
+    cmlr_paths["model_conf"],
+    cmlr_paths["rnnlm"],
+    cmlr_paths["rnnlm_conf"],
+]
+
+if all(path.exists() for path in required):
+    print("mpc001 assets already prepared; skipping extract/copy")
+    raise SystemExit(0)
+
 archives = {
     "LRS3_V_WER19.1.zip": "lrs3_model",
     "CMLR_V_WER8.0.zip": "cmlr_model",
@@ -102,18 +132,6 @@ def find_asset_dir(base: Path) -> Path:
         raise SystemExit(f"no model.pth + model.json found under {base}")
     return matches[0]
 
-def config_paths(config_file: Path) -> dict[str, Path]:
-    cfg = configparser.ConfigParser()
-    cfg.read(config_file)
-    result = {}
-    for key in ["model_path", "model_conf", "rnnlm", "rnnlm_conf"]:
-        value = cfg.get("model", key, fallback="")
-        if value:
-            result[key] = repo / value
-    return result
-
-lrs3_paths = config_paths(repo / "configs" / "LRS3_V_WER19.1.ini")
-cmlr_paths = config_paths(repo / "configs" / "CMLR_V_WER8.0.ini")
 jobs = [
     (root / "extract" / "lrs3_model", lrs3_paths["model_path"].parent),
     (root / "extract" / "cmlr_model", cmlr_paths["model_path"].parent),
@@ -129,7 +147,7 @@ for src_base, target_dir in jobs:
         print("copied", target_dir / name)
 PY
 
-"$PYTHON_BIN" -m pip install -U huggingface_hub
+"$PYTHON_BIN" -m pip install --upgrade huggingface_hub
 "$PYTHON_BIN" - <<'PY'
 from huggingface_hub import snapshot_download
 import os
@@ -140,5 +158,6 @@ snapshot_download(
     local_dir=str(Path(os.environ["SV_ROOT"]) / "models" / "minicpm-o-4_5"),
 )
 PY
+check_rocm_python
 
 echo "setup complete"
