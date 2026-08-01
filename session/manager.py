@@ -14,6 +14,10 @@ class ServerBusyError(SessionError):
     code = "SERVER_BUSY"
 
 
+class SessionReplacedError(SessionError):
+    code = "SESSION_REPLACED"
+
+
 @dataclass(frozen=True)
 class CreatedSession:
     session_id: str
@@ -78,8 +82,6 @@ class SessionManager:
         expires_at = self._pending.pop(session_id, None)
         if expires_at is None:
             raise SessionError("invalid or expired session")
-        if self._active:
-            raise ServerBusyError("server already has an active streaming session")
         now = datetime.now(timezone.utc)
         active = ActiveSession(
             session_id=session_id,
@@ -88,8 +90,16 @@ class SessionManager:
             created_at=now,
             last_seen_at=now,
         )
+        self._active.clear()
         self._active[session_id] = active
         return active
+
+    def is_current(self, session_id: str) -> bool:
+        return session_id in self._active
+
+    def ensure_current(self, active: ActiveSession) -> None:
+        if self._active.get(active.session_id) is not active:
+            raise SessionReplacedError("session was replaced by a newer connection")
 
     def get_active(self, session_id: str) -> ActiveSession:
         active = self._active.get(session_id)

@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -56,8 +57,9 @@ class RealMiniCPMInterpreter:
             raise FileNotFoundError(model_path)
         self.model_path = model_path
         auto_model, auto_tokenizer = _import_transformers()
-        self.tokenizer = auto_tokenizer.from_pretrained(str(model_path), trust_remote_code=True)
-        self.model = auto_model.from_pretrained(str(model_path), trust_remote_code=True)
+        with _quiet_minicpm_model_load():
+            self.tokenizer = auto_tokenizer.from_pretrained(str(model_path), trust_remote_code=True)
+            self.model = auto_model.from_pretrained(str(model_path), trust_remote_code=True)
         self.model = self.model.eval()
         if hasattr(self.model, "cuda"):
             self.model = self.model.cuda()
@@ -103,3 +105,32 @@ def _import_pil_image() -> Any:
     from PIL import Image
 
     return Image
+
+
+class _quiet_minicpm_model_load:
+    def __enter__(self) -> None:
+        self._warnings = warnings.catch_warnings()
+        self._warnings.__enter__()
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*image_processor_class argument is deprecated.*",
+            category=FutureWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*Using a slow image processor as `use_fast` is unset.*",
+        )
+        try:
+            from transformers.utils import logging as transformers_logging
+        except Exception:
+            self._transformers_logging = None
+            self._previous_verbosity = None
+        else:
+            self._transformers_logging = transformers_logging
+            self._previous_verbosity = transformers_logging.get_verbosity()
+            transformers_logging.set_verbosity_error()
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        if self._transformers_logging is not None and self._previous_verbosity is not None:
+            self._transformers_logging.set_verbosity(self._previous_verbosity)
+        self._warnings.__exit__(exc_type, exc_value, traceback)

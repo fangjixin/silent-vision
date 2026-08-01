@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from backend.main import create_app
 from lip.base import MouthFrame
-from session.manager import SessionManager, ServerBusyError
+from session.manager import SessionManager, SessionReplacedError
 
 
 def test_create_pending_session_returns_secure_uuid():
@@ -16,17 +16,22 @@ def test_create_pending_session_returns_secure_uuid():
     assert created.expires_in_seconds == 30
 
 
-def test_only_one_active_streaming_session_is_allowed():
+def test_new_active_session_takes_over_active_slot():
     manager = SessionManager(pending_ttl=timedelta(seconds=30), window_frames=75, inference_stride=25)
     first = manager.create_pending_session()
     second = manager.create_pending_session()
-    manager.activate(first.session_id)
+    old_active = manager.activate(first.session_id)
+    new_active = manager.activate(second.session_id)
+
+    assert new_active.session_id == second.session_id
+    assert manager.is_current(second.session_id)
+    assert not manager.is_current(first.session_id)
     try:
-        manager.activate(second.session_id)
-    except ServerBusyError as exc:
-        assert exc.code == "SERVER_BUSY"
+        manager.ensure_current(old_active)
+    except SessionReplacedError as exc:
+        assert exc.code == "SESSION_REPLACED"
     else:
-        raise AssertionError("second active session should be rejected")
+        raise AssertionError("old active session should be marked as replaced")
 
 
 def test_disconnect_releases_active_slot():

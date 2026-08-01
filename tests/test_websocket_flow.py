@@ -34,16 +34,18 @@ def test_fake_websocket_flow_reaches_agent_result(app):
         } <= seen
 
 
-def test_second_active_websocket_gets_server_busy(app):
+def test_second_active_websocket_takes_over_slot(app):
     client = TestClient(app)
     first_id = client.post("/api/sessions").json()["sessionId"]
     second_id = client.post("/api/sessions").json()["sessionId"]
     with client.websocket_connect(f"/ws/{first_id}", headers={"origin": "http://localhost:8000"}) as first:
         assert first.receive_json()["type"] == "session.ready"
         with client.websocket_connect(f"/ws/{second_id}", headers={"origin": "http://localhost:8000"}) as second:
-            error = second.receive_json()
-            assert error["type"] == "error"
-            assert error["code"] == "SERVER_BUSY"
+            assert second.receive_json()["type"] == "session.ready"
+            first.send_json({"type": "ping"})
+            replaced = first.receive_json()
+            assert replaced["type"] == "error"
+            assert replaced["code"] == "SESSION_REPLACED"
 
 
 def test_frontend_index_is_served(app):

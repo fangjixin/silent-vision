@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import shutil
@@ -9,12 +10,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from backend.schemas import ErrorCode, ErrorEvent, SemanticResult, utc_now
 from lip.base import MouthFrame
-from session.manager import ServerBusyError, SessionError
+from session.manager import SessionError, SessionReplacedError
 from vision.face import FrameDecodeError, decode_jpeg_frame
 from vision.mouth import crop_mouth
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+MAX_REUSED_MOUTH_FRAMES = 10
 
 
 def _event(event_type: str, session_id: str, **payload: object) -> dict[str, object]:
@@ -81,32 +83,122 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
 
     await websocket.accept()
     logger.info("websocket accepted session_id=%s origin=%s", session_id, origin)
+    send_lock = asyncio.Lock()
+
+    async def send_json(payload: dict[str, object]) -> None:
+        async with send_lock:
+            await websocket.send_json(payload)
+
+    async def send_error(stage: str, code: ErrorCode, message: str, recoverable: bool) -> None:
+        event = ErrorEvent(sessionId=session_id, stage=stage, code=code, message=message, recoverable=recoverable)
+        await send_json(event.model_dump(mode="json"))
+
     try:
         active = websocket.app.state.session_manager.activate(session_id)
-    except ServerBusyError:
-        await _send_error(
-            websocket,
-            session_id,
-            "session",
-            ErrorCode.SERVER_BUSY,
-            "server already has an active streaming session",
-            False,
-        )
-        await websocket.close(code=1013)
-        return
     except SessionError:
-        await _send_error(
-            websocket,
-            session_id,
-            "session",
-            ErrorCode.INVALID_SESSION,
-            "invalid or expired session",
-            False,
-        )
+        await send_error("session", ErrorCode.INVALID_SESSION, "invalid or expired session", False)
         await websocket.close(code=1008)
         return
 
-    await websocket.send_json(
+    async def ensure_current_or_close() -> bool:
+        try:
+            websocket.app.state.session_manager.ensure_current(active)
+        except SessionReplacedError:
+            await send_error(
+                "session",
+                ErrorCode.SESSION_REPLACED,
+                "session was replaced by a newer connection",
+                False,
+            )
+            await websocket.close(code=1000)
+            return False
+        return True
+
+    async def run_inference_loop(initial_window: Any) -> None:
+        current = initial_window
+        try:
+            while current is not None:
+                if not websocket.app.state.session_manager.is_current(session_id):
+                    return
+                await send_json(
+                    _event(
+                        "inference.started",
+                        session_id,
+                        startSequence=current.start_sequence,
+                        endSequence=current.end_sequence,
+                    )
+                )
+                async with websocket.app.state.inference_lock:
+                    lip_result = await asyncio.to_thread(websocket.app.state.lip_engine.predict, current)
+                    if not websocket.app.state.session_manager.is_current(session_id):
+                        return
+                    await send_json(
+                        _event(
+                            "lip.candidates",
+                            session_id,
+                            candidates=[candidate.model_dump() for candidate in lip_result.candidates],
+                            degradedModels=lip_result.degradedModels,
+                        )
+                    )
+                    if not lip_result.candidates:
+                        await send_error(
+                            "lip",
+                            ErrorCode.LIP_MODELS_FAILED,
+                            "both lip reading models failed",
+                            True,
+                        )
+                    else:
+                        sampled = [frame.image for frame in current.frames[::15]]
+                        try:
+                            semantic = await asyncio.to_thread(
+                                websocket.app.state.semantic_interpreter.interpret,
+                                lip_result.candidates,
+                                sampled,
+                                {"frames": len(current.frames)},
+                            )
+                        except Exception:
+                            logger.exception("MiniCPM inference failed session_id=%s", session_id)
+                            await send_error(
+                                "minicpm",
+                                ErrorCode.MINICPM_FAILED,
+                                "MiniCPM failed to produce valid semantic JSON",
+                                True,
+                            )
+                            semantic = SemanticResult(
+                                language="unknown",
+                                text="",
+                                confidence=0.0,
+                                reason="MiniCPM failure",
+                            )
+                        if not websocket.app.state.session_manager.is_current(session_id):
+                            return
+                        await send_json(_event("semantic.result", session_id, **semantic.model_dump()))
+                        agent = websocket.app.state.agent_policy.decide(semantic)
+                        await send_json(
+                            agent.model_dump(mode="json")
+                            | {"sessionId": session_id, "timestamp": utc_now().isoformat()}
+                        )
+                current = active.latest_pending_window
+                active.latest_pending_window = None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("inference task failed session_id=%s", session_id)
+            if websocket.app.state.session_manager.is_current(session_id):
+                await send_error("inference", ErrorCode.INTERNAL_ERROR, "inference task failed", True)
+        finally:
+            if active.active_inference_task is asyncio.current_task():
+                active.active_inference_task = None
+
+    def enqueue_inference(window: Any) -> None:
+        task = active.active_inference_task
+        if task is not None and not task.done():
+            active.latest_pending_window = window
+            return
+        active.latest_pending_window = None
+        active.active_inference_task = asyncio.create_task(run_inference_loop(window))
+
+    await send_json(
         _event(
             "session.ready",
             session_id,
@@ -120,23 +212,59 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     )
 
     sequence = 0
+    reused_mouth_frames = 0
+    last_mouth_image = None
+
+    async def publish_buffered_frame(
+        frame: MouthFrame,
+        *,
+        face_detected: bool,
+        mouth_box: object | None,
+        reused_last_mouth_crop: bool,
+    ) -> None:
+        window = active.add_mouth_frame(frame)
+        await send_json(
+            _event(
+                "vision.result",
+                session_id,
+                faceDetected=face_detected,
+                mouthBox=mouth_box,
+                reusedLastMouthCrop=reused_last_mouth_crop,
+                bufferedFrames=len(active.frames),
+            )
+        )
+        await send_json(
+            _event(
+                "buffer.progress",
+                session_id,
+                bufferedFrames=len(active.frames),
+                requiredFrames=settings.window_frames,
+            )
+        )
+        await send_json(_event("metrics.update", session_id, **_metrics(active)))
+        if window is not None:
+            enqueue_inference(window)
+
     try:
         while True:
             message = await websocket.receive()
             if message["type"] == "websocket.disconnect":
+                break
+            if not await ensure_current_or_close():
                 break
             text = message.get("text")
             if text is not None:
                 command_type = _parse_command(text)
                 if command_type == "stream.start":
                     active.reset_stream()
-                    await websocket.send_json(_event("stream.started", session_id))
+                    await send_json(_event("stream.started", session_id))
                 elif command_type == "stream.stop":
                     active.reset_stream()
                     active.streaming = False
-                    await websocket.send_json(_event("stream.stopped", session_id))
+                    active.latest_pending_window = None
+                    await send_json(_event("stream.stopped", session_id))
                 elif command_type == "ping":
-                    await websocket.send_json(_event("pong", session_id))
+                    await send_json(_event("pong", session_id))
                 continue
 
             data = message.get("bytes")
@@ -148,102 +276,36 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             try:
                 image = decode_jpeg_frame(data, settings)
             except FrameDecodeError as exc:
-                await _send_error(websocket, session_id, "frame", exc.code, str(exc), True)
+                await send_error("frame", exc.code, str(exc), True)
                 continue
 
             detection = websocket.app.state.face_detector.detect(image)
             if not detection.face_detected:
                 code = ErrorCode.MULTIPLE_FACES if detection.face_count > 1 else ErrorCode.FACE_NOT_FOUND
-                await _send_error(
-                    websocket,
-                    session_id,
-                    "vision",
-                    code,
-                    "current frame does not contain exactly one clear face",
-                    True,
-                )
+                await send_error("vision", code, "current frame does not contain exactly one clear face", True)
+                if last_mouth_image is not None and reused_mouth_frames < MAX_REUSED_MOUTH_FRAMES:
+                    reused_mouth_frames += 1
+                    await publish_buffered_frame(
+                        MouthFrame(sequence=sequence, received_at_ms=received_at_ms, image=last_mouth_image.copy()),
+                        face_detected=False,
+                        mouth_box=None,
+                        reused_last_mouth_crop=True,
+                    )
                 continue
             crop = crop_mouth(image, detection.landmarks, settings.mouth_size)
+            last_mouth_image = crop.image.copy()
+            reused_mouth_frames = 0
             frame = MouthFrame(sequence=sequence, received_at_ms=received_at_ms, image=crop.image)
-            window = active.add_mouth_frame(frame)
-            await websocket.send_json(
-                _event(
-                    "vision.result",
-                    session_id,
-                    faceDetected=True,
-                    mouthBox=crop.box.model_dump(),
-                    bufferedFrames=len(active.frames),
-                )
-            )
-            await websocket.send_json(
-                _event(
-                    "buffer.progress",
-                    session_id,
-                    bufferedFrames=len(active.frames),
-                    requiredFrames=settings.window_frames,
-                )
-            )
-            await websocket.send_json(_event("metrics.update", session_id, **_metrics(active)))
-            if window is None:
-                continue
-
-            await websocket.send_json(
-                _event(
-                    "inference.started",
-                    session_id,
-                    startSequence=window.start_sequence,
-                    endSequence=window.end_sequence,
-                )
-            )
-            async with websocket.app.state.inference_lock:
-                lip_result = websocket.app.state.lip_engine.predict(window)
-                await websocket.send_json(
-                    _event(
-                        "lip.candidates",
-                        session_id,
-                        candidates=[candidate.model_dump() for candidate in lip_result.candidates],
-                        degradedModels=lip_result.degradedModels,
-                    )
-                )
-                if not lip_result.candidates:
-                    await _send_error(
-                        websocket,
-                        session_id,
-                        "lip",
-                        ErrorCode.LIP_MODELS_FAILED,
-                        "both lip reading models failed",
-                        True,
-                    )
-                    continue
-                sampled = [frame.image for frame in window.frames[::15]]
-                try:
-                    semantic = websocket.app.state.semantic_interpreter.interpret(
-                        lip_result.candidates,
-                        sampled,
-                        {"frames": len(window.frames)},
-                    )
-                except Exception:
-                    await _send_error(
-                        websocket,
-                        session_id,
-                        "minicpm",
-                        ErrorCode.MINICPM_FAILED,
-                        "MiniCPM failed to produce valid semantic JSON",
-                        True,
-                    )
-                    semantic = SemanticResult(
-                        language="unknown",
-                        text="",
-                        confidence=0.0,
-                        reason="MiniCPM failure",
-                    )
-            await websocket.send_json(_event("semantic.result", session_id, **semantic.model_dump()))
-            agent = websocket.app.state.agent_policy.decide(semantic)
-            await websocket.send_json(
-                agent.model_dump(mode="json") | {"sessionId": session_id, "timestamp": utc_now().isoformat()}
+            await publish_buffered_frame(
+                frame,
+                face_detected=True,
+                mouth_box=crop.box.model_dump(),
+                reused_last_mouth_crop=False,
             )
     except WebSocketDisconnect:
         websocket.app.state.session_manager.disconnect(session_id)
     finally:
+        if active.active_inference_task is not None:
+            active.active_inference_task.cancel()
         websocket.app.state.session_manager.disconnect(session_id)
         _cleanup_temp(session_id)

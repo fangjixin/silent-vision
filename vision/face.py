@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Protocol
+import warnings
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
@@ -73,9 +74,15 @@ def decode_jpeg_frame(data: bytes, settings: Settings) -> np.ndarray:
 
 class FaceDetector:
     def __init__(self) -> None:
-        import mediapipe as mp
+        warnings.filterwarnings(
+            "ignore",
+            message=r"SymbolDatabase.GetPrototype\(\) is deprecated.*",
+            category=UserWarning,
+            module=r"google\.protobuf\.symbol_database",
+        )
+        face_mesh = _import_face_mesh_module()
 
-        self._mesh = mp.solutions.face_mesh.FaceMesh(
+        self._mesh = face_mesh.FaceMesh(
             static_image_mode=False,
             max_num_faces=2,
             refine_landmarks=True,
@@ -108,3 +115,15 @@ def create_face_detector(settings: Settings) -> FaceDetectorProtocol:
     if settings.model_backend == "fake":
         return FakeFaceDetector()
     return FaceDetector()
+
+
+def _import_face_mesh_module():
+    import mediapipe as mp
+
+    solutions = getattr(mp, "solutions", None)
+    if solutions is not None:
+        return solutions.face_mesh
+
+    from mediapipe.python.solutions import face_mesh
+
+    return face_mesh
