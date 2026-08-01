@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     model_backend: Literal["fake", "real"] = "fake"
-    persistence_root: Path = Path("/workspace/persistence/silent-vision")
+    persistence_root: Path = Path("/workspace/persistent/silent-vision")
     capture_fps: int = Field(default=25, ge=1, le=60)
     window_frames: int = Field(default=75, ge=1)
     inference_stride: int = Field(default=25, ge=1)

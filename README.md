@@ -23,7 +23,7 @@ Open `http://localhost:8000` from the machine with the camera.
 ## Persistence layout
 
 ```text
-/workspace/persistence/silent-vision/
+/workspace/persistent/silent-vision/
 ├── models/
 │   └── minicpm-o-4_5/
 ├── repos/
@@ -39,11 +39,11 @@ Open `http://localhost:8000` from the machine with the camera.
 ## ROCm container
 
 ```bash
-mkdir -p /workspace/persistence/silent-vision/models/minicpm-o-4_5
-mkdir -p /workspace/persistence/silent-vision/repos
-mkdir -p /workspace/persistence/silent-vision/cache/{huggingface,torch}
-mkdir -p /workspace/persistence/silent-vision/reports/{benchmarks,diagnostics}
-mkdir -p /workspace/persistence/silent-vision/logs
+mkdir -p /workspace/persistent/silent-vision/models/minicpm-o-4_5
+mkdir -p /workspace/persistent/silent-vision/repos
+mkdir -p /workspace/persistent/silent-vision/cache/{huggingface,torch}
+mkdir -p /workspace/persistent/silent-vision/reports/{benchmarks,diagnostics}
+mkdir -p /workspace/persistent/silent-vision/logs
 docker compose -f docker/docker-compose.yml up --build
 ```
 
@@ -52,13 +52,13 @@ docker compose -f docker/docker-compose.yml up --build
 MiniCPM-o 4.5 is stored as a Hugging Face snapshot under:
 
 ```text
-/workspace/persistence/silent-vision/models/minicpm-o-4_5
+/workspace/persistent/silent-vision/models/minicpm-o-4_5
 ```
 
 The real lip readers use `mpc001/Visual_Speech_Recognition_for_Multiple_Languages` instead of the old TorchScript placeholder files. Silent Vision does not call the upstream `infer.py` for live WebSocket windows, because that script runs its own face tracking. Instead, `scripts/mpc001_mouth_infer.py` feeds the already-cropped 75-frame mouth window directly into the mpc001 model stack. Clone the repo under:
 
 ```text
-/workspace/persistence/silent-vision/repos/Visual_Speech_Recognition_for_Multiple_Languages
+/workspace/persistent/silent-vision/repos/Visual_Speech_Recognition_for_Multiple_Languages
 ```
 
 Then download and extract the model zoo packages referenced by:

@@ -2,8 +2,8 @@ FROM rocm/pytorch:latest
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/workspace/persistence/silent-vision/cache/huggingface
-ENV TORCH_HOME=/workspace/persistence/silent-vision/cache/torch
+ENV HF_HOME=/workspace/persistent/silent-vision/cache/huggingface
+ENV TORCH_HOME=/workspace/persistent/silent-vision/cache/torch
 
 COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade pip && python -m pip install -r /app/requirements.txt

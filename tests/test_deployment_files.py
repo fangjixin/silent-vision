@@ -3,7 +3,7 @@ from pathlib import Path
 
 def test_docker_compose_mounts_persistence_root_and_rocm_devices():
     compose = Path("docker/docker-compose.yml").read_text()
-    assert "/workspace/persistence/silent-vision:/workspace/persistence/silent-vision" in compose
+    assert "/workspace/persistent/silent-vision:/workspace/persistent/silent-vision" in compose
     assert "/dev/kfd:/dev/kfd" in compose
     assert "/dev/dri:/dev/dri" in compose
     assert "127.0.0.1:8000:8000" in compose

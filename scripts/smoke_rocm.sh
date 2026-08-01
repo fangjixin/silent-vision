@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export MODEL_BACKEND=real
-export PERSISTENCE_ROOT=/workspace/persistence/silent-vision
+export PERSISTENCE_ROOT=/workspace/persistent/silent-vision
 python - <<'PY'
 from pathlib import Path
 
-root = Path("/workspace/persistence/silent-vision")
+root = Path("/workspace/persistent/silent-vision")
 required = [
     Path("scripts/mpc001_mouth_infer.py"),
     root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages" / "infer.py",

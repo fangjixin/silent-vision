@@ -5,7 +5,7 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       MODEL_BACKEND: real
-      PERSISTENCE_ROOT: /workspace/persistence/silent-vision
+      PERSISTENCE_ROOT: /workspace/persistent/silent-vision
       ALLOWED_ORIGINS: http://localhost:8000
       LOG_TRANSCRIPTS: "false"
       HOST: 127.0.0.1
@@ -18,7 +18,7 @@ services:
     ipc: host
     shm_size: 16gb
     volumes:
-      - /workspace/persistence/silent-vision:/workspace/persistence/silent-vision
+      - /workspace/persistent/silent-vision:/workspace/persistent/silent-vision
     ports:
       - 127.0.0.1:8000:8000
     restart: unless-stopped
