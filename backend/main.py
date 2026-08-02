@@ -11,6 +11,7 @@ from api.session import router as session_router
 from api.websocket import router as websocket_router
 from agent.agent import AgentPolicy
 from backend.config import Settings, get_settings
+from command.inference import build_command_classifier
 from lip.fake import FakeLipReader
 from lip.inference import LipInferenceEngine
 from llm.minicpm import build_minicpm_interpreter
@@ -29,19 +30,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         window_frames=app_settings.window_frames,
         inference_stride=app_settings.inference_stride,
     )
-    if app_settings.model_backend == "real":
+    needs_transcription = app_settings.recognition_mode == "transcription" or app_settings.command_fallback_transcription
+    if app_settings.model_backend == "real" and needs_transcription:
         from lip.avhubert import AVHuBERTLipReader
         from lip.cmlr import CMLRLipReader
 
         readers = [AVHuBERTLipReader(app_settings), CMLRLipReader(app_settings)]
-    else:
+    elif needs_transcription:
         readers = [
             FakeLipReader(model="avhubert", language="en", text="turn on the light", confidence=0.72),
             FakeLipReader(model="cmlr", language="zh", text="请打开灯", confidence=0.76),
         ]
+    else:
+        readers = []
     app.state.lip_engine = LipInferenceEngine(readers)
+    app.state.command_classifier = build_command_classifier(app_settings)
     app.state.inference_lock = asyncio.Lock()
-    app.state.semantic_interpreter = build_minicpm_interpreter(app_settings)
+    app.state.semantic_interpreter = None
+    if app_settings.recognition_mode == "transcription" or app_settings.command_fallback_transcription:
+        app.state.semantic_interpreter = build_minicpm_interpreter(app_settings)
     app.state.agent_policy = AgentPolicy(threshold=app_settings.model_confidence_threshold)
     app.state.face_detector = create_face_detector(app_settings)
     app.state.models["ready"] = True

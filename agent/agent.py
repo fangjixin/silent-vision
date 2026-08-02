@@ -1,4 +1,4 @@
-from backend.schemas import AgentResult, SemanticResult
+from backend.schemas import AgentResult, CommandDecision, SemanticResult
 
 
 class AgentPolicy:
@@ -27,5 +27,30 @@ class AgentPolicy:
             language=result.language,
             text=result.text,
             arguments={},
+            requiresConfirmation=False,
+        )
+
+    def decide_command(self, decision: CommandDecision) -> AgentResult:
+        if not decision.accepted:
+            return AgentResult(
+                action="reject",
+                language="unknown",
+                text="",
+                arguments={"intent": decision.intent, "reason": decision.reason},
+                requiresConfirmation=False,
+            )
+        if not decision.executable:
+            return AgentResult(
+                action="ignore",
+                language="unknown",
+                text="",
+                arguments={"intent": decision.intent, "reason": decision.reason},
+                requiresConfirmation=False,
+            )
+        return AgentResult(
+            action="execute",
+            language="unknown",
+            text=decision.intent,
+            arguments={"intent": decision.intent, "confidence": decision.confidence},
             requiresConfirmation=False,
         )

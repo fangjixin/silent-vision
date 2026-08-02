@@ -5,7 +5,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 Language = Literal["zh", "en", "unknown"]
-AgentAction = Literal["respond", "confirm", "unknown"]
+AgentAction = Literal["respond", "confirm", "unknown", "execute", "reject", "ignore"]
+CommandIntentName = Literal["LIGHT_ON", "LIGHT_OFF", "OPEN_DOOR", "CHAT_OTHER", "UNKNOWN"]
 
 
 def utc_now() -> datetime:
@@ -55,6 +56,18 @@ class SemanticResult(BaseModel):
     text: str
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str
+
+
+class CommandDecision(BaseModel):
+    intent: CommandIntentName
+    accepted: bool
+    executable: bool
+    confidence: float = Field(ge=0.0, le=1.0)
+    margin: float = Field(ge=0.0, le=1.0)
+    topK: list[dict[str, Any]]
+    logits: list[float]
+    reason: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentResult(BaseModel):

@@ -102,6 +102,69 @@ def test_frontend_one_shot_capture_auto_submits_full_buffer_without_cancelling_i
     assert "stream.commit" in auto_submit_block
 
 
+def test_frontend_records_utterance_level_binary_video_clips():
+    websocket_js = Path("frontend/websocket.js").read_text()
+    camera_js = Path("frontend/camera.js").read_text()
+    assert "MediaRecorder" in camera_js
+    assert "recordClip" in camera_js
+    assert "video/webm" in camera_js
+    assert "clip.start" in websocket_js
+    assert "state.ws.send(clipBlob);" in websocket_js
+    assert "readAsDataURL" not in camera_js
+    assert "base64" not in camera_js.lower()
+
+
+def test_backend_uses_pyav_25fps_clip_preprocessing_and_debug_artifacts():
+    requirements = Path("requirements.txt").read_text()
+    websocket_py = Path("api/websocket.py").read_text()
+    clip_py = Path("video/clip.py").read_text()
+    roi_py = Path("video/mouth_roi.py").read_text()
+    assert "av>=" in requirements
+    assert "decode_video_clip" in websocket_py
+    assert "target_fps" in clip_py
+    assert "command_clip_fps" in websocket_py
+    assert "write_mouth_roi_video" in roi_py
+    assert "write_aligned_face_video" in roi_py
+    assert "mouth_roi_video" in websocket_py
+    assert "mouth_roi_npy" in websocket_py
+    assert "aligned_face_video" in websocket_py
+    assert "original_video" in websocket_py
+
+
+def test_command_classifier_files_and_scripts_exist():
+    for path in [
+        "command/labels.py",
+        "command/model.py",
+        "command/inference.py",
+        "scripts/train_command_classifier.py",
+        "scripts/validate_command_classifier.py",
+        "scripts/infer_command_clip.py",
+        "scripts/record_command_manifest.py",
+    ]:
+        assert Path(path).exists()
+
+    model_py = Path("command/model.py").read_text()
+    inference_py = Path("command/inference.py").read_text()
+    schemas_py = Path("backend/schemas.py").read_text()
+    assert "class CommandConformerClassifier" in model_py
+    assert "num_layers: int = 4" in model_py
+    assert "AttentivePooling" in model_py
+    assert "depthwise_conv" in model_py
+    assert "top1_margin" in inference_py
+    assert "CommandDecision" in schemas_py
+    assert "LIGHT_ON" in Path("command/labels.py").read_text()
+
+
+def test_rejected_commands_do_not_call_llm_or_execute_actions():
+    websocket_py = Path("api/websocket.py").read_text()
+    agent_py = Path("agent/agent.py").read_text()
+    assert "command_decision.accepted" in websocket_py
+    command_clip_block = websocket_py.split("async def process_command_clip", 1)[1].split("async def run_inference_loop", 1)[0]
+    assert "semantic_interpreter.interpret" not in command_clip_block
+    assert "decide_command" in agent_py
+    assert "action=\"reject\"" in agent_py
+
+
 def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows():
     websocket_py = Path("api/websocket.py").read_text()
     manager_py = Path("session/manager.py").read_text()

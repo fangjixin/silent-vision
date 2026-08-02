@@ -1,10 +1,17 @@
-import { CameraStreamer } from "./camera.js";
+import { CameraStreamer, ClipRecorder } from "./camera.js";
 
 const state = {
   ws: null,
   sessionId: null,
   camera: null,
-  parameters: { captureFps: 25, windowFrames: 75, captureCountdownSeconds: 3 },
+  parameters: {
+    captureFps: 25,
+    windowFrames: 75,
+    captureCountdownSeconds: 3,
+    commandClipMinSeconds: 2,
+    commandClipMaxSeconds: 5,
+    recognitionMode: "command",
+  },
   streaming: false,
   connectionGeneration: 0,
   phase: "idle",
@@ -90,6 +97,12 @@ function handleEvent(event) {
     setText("semanticStatus", "running");
     setText("candidateOutput", JSON.stringify(event.candidates, null, 2));
   }
+  if (event.type === "clip.received") setText("bufferStatus", `${event.bytes} bytes`);
+  if (event.type === "command.result") {
+    setText("lipStatus", event.intent);
+    setText("semanticStatus", event.accepted ? "accepted" : `rejected: ${event.reason}`);
+    setText("candidateOutput", JSON.stringify(event, null, 2));
+  }
   if (event.type === "semantic.result") setText("semanticStatus", `${event.language}: ${event.text}`);
   if (event.type === "inference.started") setText("lipStatus", "running");
   if (event.type === "agent.result") {
@@ -108,7 +121,7 @@ function resetUiForNewStream() {
   setText("cameraStatus", "starting");
   setText("socketStatus", "connecting");
   setText("visionStatus", "waiting");
-  setText("bufferStatus", `0 / ${state.parameters.windowFrames || 75}`);
+  setText("bufferStatus", state.parameters.recognitionMode === "command" ? "waiting" : `0 / ${state.parameters.windowFrames || 75}`);
   setText("lipStatus", "waiting");
   setText("semanticStatus", "waiting");
   setText("agentStatus", "waiting");
@@ -136,7 +149,7 @@ function setStoppedUiState() {
   setText("cameraStatus", "stopped");
   setText("socketStatus", "closed");
   setText("visionStatus", "stopped");
-  setText("bufferStatus", `0 / ${state.parameters.windowFrames || 75}`);
+  setText("bufferStatus", state.parameters.recognitionMode === "command" ? "waiting" : `0 / ${state.parameters.windowFrames || 75}`);
   setText("lipStatus", "stopped");
   setText("semanticStatus", "stopped");
   setText("agentStatus", "stopped");
@@ -157,6 +170,49 @@ function setAnalyzingUiState() {
   setText("agentStatus", "waiting");
   document.getElementById("startButton").disabled = true;
   document.getElementById("stopButton").disabled = false;
+}
+
+async function recordAndSendClip(connectionGeneration) {
+  state.camera = new ClipRecorder({
+    video: document.getElementById("cameraPreview"),
+    fps: state.parameters.captureFps || 25,
+  });
+  await state.camera.startPreview();
+  await runCaptureCountdown(connectionGeneration);
+  if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
+  state.ws.send(JSON.stringify({ type: "clip.start" }));
+  state.phase = "recording";
+  state.streaming = true;
+  setText("cameraStatus", "recording");
+  setText("bufferStatus", "recording clip");
+  const durationMs = Math.round((state.parameters.commandClipMaxSeconds || 5) * 1000);
+  const clipBlob = await state.camera.recordClip({ durationMs });
+  if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
+  stopCamera();
+  state.streaming = false;
+  state.ws.send(clipBlob);
+  setAnalyzingUiState();
+}
+
+async function streamFrames(connectionGeneration) {
+  state.ws.send(JSON.stringify({ type: "stream.start" }));
+  state.phase = "recording";
+  state.streaming = true;
+  state.camera = new CameraStreamer({
+    video: document.getElementById("cameraPreview"),
+    canvas: document.getElementById("captureCanvas"),
+    fps: state.parameters.captureFps || 25,
+    onFrame: (blob) => {
+      if (!state.streaming || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+      if (state.ws.bufferedAmount > 2_000_000) return;
+      state.ws.send(blob);
+    },
+  });
+  await state.camera.startPreview();
+  await runCaptureCountdown(connectionGeneration);
+  if (connectionGeneration !== state.connectionGeneration) return;
+  state.camera.startCapture();
+  setText("cameraStatus", "recording");
 }
 
 function setDoneUiState() {
@@ -212,24 +268,11 @@ document.getElementById("startButton").addEventListener("click", async () => {
   try {
     await connect(connectionGeneration);
     if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
-    state.camera = new CameraStreamer({
-      video: document.getElementById("cameraPreview"),
-      canvas: document.getElementById("captureCanvas"),
-      fps: state.parameters.captureFps || 25,
-      onFrame: (blob) => {
-        if (!state.streaming || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-        if (state.ws.bufferedAmount > 2_000_000) return;
-        state.ws.send(blob);
-      },
-    });
-    await state.camera.startPreview();
-    await runCaptureCountdown(connectionGeneration);
-    if (connectionGeneration !== state.connectionGeneration) return;
-    state.ws.send(JSON.stringify({ type: "stream.start" }));
-    state.phase = "recording";
-    state.streaming = true;
-    state.camera.startCapture();
-    setText("cameraStatus", "recording");
+    if ((state.parameters.recognitionMode || "command") === "command") {
+      await recordAndSendClip(connectionGeneration);
+    } else {
+      await streamFrames(connectionGeneration);
+    }
   } catch (error) {
     if (connectionGeneration !== state.connectionGeneration) return;
     console.error("Silent Vision start failed", error);

@@ -1,5 +1,39 @@
 # Silent Vision
 
+Silent Vision now supports a closed-set visual command path for short
+utterance clips. The browser records a 2-5 second `video/webm` clip, uploads
+it as binary WebSocket data, and the backend classifies business intents such
+as `LIGHT_ON`, `LIGHT_OFF`, `OPEN_DOOR`, `CHAT_OTHER`, and `UNKNOWN`.
+
+Rejected commands do not call MiniCPM and do not execute actions.
+
+AMD ROCm command-mode startup:
+
+```bash
+cd /workspace/template-repos/template-907/repo
+export RECOGNITION_MODE=command
+export COMMAND_BACKEND=fake
+export DEBUG_DUMP_WINDOWS=true
+bash scripts/amd_real_oneclick.sh
+```
+
+After collecting command samples, train a classifier:
+
+```bash
+/opt/venv/bin/python scripts/record_command_manifest.py --output /workspace/persistent/silent-vision/commands/manifest.jsonl
+/opt/venv/bin/python scripts/train_command_classifier.py \
+  --manifest /workspace/persistent/silent-vision/commands/manifest.jsonl \
+  --output /workspace/persistent/silent-vision/models/command_classifier.pt
+```
+
+Then run the server with:
+
+```bash
+export COMMAND_BACKEND=torch
+export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/command_classifier.pt
+bash scripts/amd_real_oneclick.sh
+```
+
 Realtime bilingual lipreading prototype for one active anonymous browser session.
 
 ## Fake mode

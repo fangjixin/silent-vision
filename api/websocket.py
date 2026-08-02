@@ -11,8 +11,11 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from PIL import Image, ImageDraw
 
 from backend.schemas import ErrorCode, ErrorEvent, SemanticResult, utc_now
+from command.inference import save_command_debug
 from lip.base import MouthFrame
 from session.manager import SessionError, SessionReplacedError
+from video.clip import decode_video_clip, save_original_video
+from video.mouth_roi import extract_mouth_roi_clip, write_aligned_face_video, write_mouth_roi_video
 from vision.face import FrameDecodeError, decode_jpeg_frame
 from vision.mouth import crop_mouth
 
@@ -217,6 +220,87 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             task.cancel()
             await asyncio.sleep(0)
 
+    async def process_command_clip(data: bytes) -> None:
+        started = time.perf_counter()
+        debug_dir = settings.debug_window_dir or settings.persistence_root / "logs" / "command-runs"
+        original_video = None
+        aligned_face_video = None
+        mouth_roi_video = None
+        mouth_roi_npy = None
+        if settings.debug_dump_windows:
+            original_video = save_original_video(data, debug_dir, session_id)
+        await send_json(_event("clip.received", session_id, bytes=len(data)))
+        try:
+            decoded = await asyncio.to_thread(decode_video_clip, data, settings.command_clip_fps)
+            roi = await asyncio.to_thread(
+                extract_mouth_roi_clip,
+                frames=decoded.frames,
+                face_detector=websocket.app.state.face_detector,
+                settings=settings,
+            )
+            if settings.debug_dump_windows:
+                import numpy as np
+
+                mouth_roi_npy = debug_dir / f"{session_id}-mouth_roi.npy"
+                np.save(mouth_roi_npy, roi.mouth_frames)
+                aligned_face_video = await asyncio.to_thread(
+                    write_aligned_face_video,
+                    roi.aligned_face_frames,
+                    debug_dir / f"{session_id}-aligned_face_video.mp4",
+                    settings.command_clip_fps,
+                )
+                mouth_roi_video = await asyncio.to_thread(
+                    write_mouth_roi_video,
+                    roi.mouth_frames,
+                    debug_dir / f"{session_id}-mouth_roi_video.mp4",
+                    settings.command_clip_fps,
+                )
+            command_decision = await asyncio.to_thread(
+                websocket.app.state.command_classifier.predict,
+                roi.mouth_frames,
+                {
+                    "frames": len(roi.mouth_frames),
+                    "sourceFrames": len(decoded.frames),
+                    "fps": decoded.fps,
+                    "durationMs": decoded.duration_ms,
+                    "detectedFrames": roi.detected_frames,
+                    "reusedFrames": roi.reused_frames,
+                    "original_video": str(original_video) if original_video else None,
+                    "aligned_face_video": str(aligned_face_video) if aligned_face_video else None,
+                    "mouth_roi_video": str(mouth_roi_video) if mouth_roi_video else None,
+                    "mouth_roi_npy": str(mouth_roi_npy) if mouth_roi_npy else None,
+                },
+            )
+        except Exception:
+            logger.exception("command clip processing failed session_id=%s bytes=%s", session_id, len(data))
+            await send_error("command", ErrorCode.INTERNAL_ERROR, "command clip processing failed", True)
+            return
+
+        metadata_path = None
+        if settings.debug_dump_windows:
+            metadata_path = save_command_debug(settings, session_id, command_decision)
+        logger.info(
+            "command result session_id=%s intent=%s accepted=%s executable=%s confidence=%.3f margin=%.3f reason=%s latency_ms=%s",
+            session_id,
+            command_decision.intent,
+            command_decision.accepted,
+            command_decision.executable,
+            command_decision.confidence,
+            command_decision.margin,
+            command_decision.reason,
+            int((time.perf_counter() - started) * 1000),
+        )
+        await send_json(
+            _event(
+                "command.result",
+                session_id,
+                **command_decision.model_dump(),
+                debugMetadataPath=str(metadata_path) if metadata_path else None,
+            )
+        )
+        agent = websocket.app.state.agent_policy.decide_command(command_decision)
+        await send_json(agent.model_dump(mode="json") | {"sessionId": session_id, "timestamp": utc_now().isoformat()})
+
     async def run_inference_loop(initial_window: Any, generation: int) -> None:
         current = initial_window
         try:
@@ -384,6 +468,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 "windowFrames": settings.window_frames,
                 "inferenceStride": settings.inference_stride,
                 "mouthSize": settings.mouth_size,
+                "recognitionMode": settings.recognition_mode,
+                "commandClipFps": settings.command_clip_fps,
+                "commandClipMinSeconds": settings.command_clip_min_seconds,
+                "commandClipMaxSeconds": settings.command_clip_max_seconds,
+                "commandConfidenceThreshold": settings.command_confidence_threshold,
+                "commandTop1Margin": settings.command_top1_margin,
             },
         )
     )
@@ -477,10 +567,25 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     await send_json(_event("stream.committed", session_id))
                 elif command_type == "ping":
                     await send_json(_event("pong", session_id))
+                elif command_type == "clip.start":
+                    await cancel_active_inference("clip started")
+                    active.reset_stream()
+                    logger.info("clip started session_id=%s", session_id)
+                    await send_json(_event("clip.started", session_id))
+                elif command_type == "clip.cancel":
+                    await cancel_active_inference("clip cancelled")
+                    active.stop_stream()
+                    logger.info("clip cancelled session_id=%s", session_id)
+                    await send_json(_event("stream.stopped", session_id))
                 continue
 
             data = message.get("bytes")
             if data is None or not active.accepting_frames:
+                continue
+
+            if settings.recognition_mode == "command":
+                active.commit_stream()
+                await process_command_clip(data)
                 continue
 
             sequence += 1

@@ -10,9 +10,19 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     model_backend: Literal["fake", "real"] = "fake"
+    recognition_mode: Literal["command", "transcription"] = "command"
+    command_backend: Literal["fake", "torch"] = "fake"
     persistence_root: Path = Path("/workspace/persistent/silent-vision")
     capture_fps: int = Field(default=25, ge=1, le=60)
     capture_countdown_seconds: int = Field(default=3, ge=0, le=10)
+    command_clip_fps: int = Field(default=25, ge=1, le=60)
+    command_clip_min_seconds: float = Field(default=2.0, ge=0.2)
+    command_clip_max_seconds: float = Field(default=5.0, ge=0.2)
+    command_confidence_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    command_top1_margin: float = Field(default=0.20, ge=0.0, le=1.0)
+    command_classifier_checkpoint: Path | None = None
+    command_fallback_transcription: bool = False
+    command_feature_dim: int = Field(default=256, ge=1)
     window_frames: int = Field(default=75, ge=1)
     inference_stride: int = Field(default=25, ge=1)
     mouth_size: int = Field(default=96, ge=16)

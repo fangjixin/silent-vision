@@ -7,12 +7,17 @@ from backend.main import create_app
 def test_settings_defaults_use_fake_backend_and_persistence_root():
     settings = Settings()
     assert settings.model_backend == "fake"
+    assert settings.recognition_mode == "command"
+    assert settings.command_backend == "fake"
     assert settings.persistence_root == Path("/workspace/persistent/silent-vision")
     assert settings.window_frames == 75
     assert settings.inference_stride == 25
     assert settings.mouth_size == 96
     assert settings.capture_fps == 25
     assert settings.capture_countdown_seconds == 3
+    assert settings.command_clip_fps == 25
+    assert settings.command_confidence_threshold == 0.85
+    assert settings.command_top1_margin == 0.20
     assert settings.log_level == "INFO"
     assert settings.debug_dump_windows is False
 
