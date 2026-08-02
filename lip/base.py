@@ -7,6 +7,10 @@ import numpy as np
 from backend.schemas import LipReadingCandidate
 
 
+class LipInferenceCancelled(Exception):
+    """Raised when a lip inference job is cancelled by stream lifecycle changes."""
+
+
 @dataclass(frozen=True)
 class MouthFrame:
     sequence: int
@@ -32,5 +36,5 @@ class LipReader(Protocol):
     name: str
     language: str
 
-    def predict(self, window: MouthWindow) -> LipReadingCandidate:
+    def predict(self, window: MouthWindow, cancel_event: object | None = None) -> LipReadingCandidate:
         raise NotImplementedError

@@ -2,6 +2,7 @@ import configparser
 import logging
 import os
 import re
+import signal
 import subprocess
 import tempfile
 from pathlib import Path
@@ -13,7 +14,7 @@ from PIL import Image
 
 from backend.config import Settings
 from backend.schemas import LipReadingCandidate
-from lip.base import MouthWindow
+from lip.base import LipInferenceCancelled, MouthWindow
 
 HYPOTHESIS_RE = re.compile(r"^hyp:\s*(?P<text>.*)\s*$", re.MULTILINE)
 logger = logging.getLogger(__name__)
@@ -50,9 +51,11 @@ class MPC001LipReader:
             decode.get("ctc_weight"),
         )
 
-    def predict(self, window: MouthWindow) -> LipReadingCandidate:
+    def predict(self, window: MouthWindow, cancel_event: object | None = None) -> LipReadingCandidate:
         if not window.frames:
             raise ValueError("empty mouth window cannot be sent to mpc001 inference")
+        if _cancelled(cancel_event):
+            raise LipInferenceCancelled("mpc001 predict cancelled before writing frames")
         started = perf_counter()
         duration_ms = window.frames[-1].received_at_ms - window.frames[0].received_at_ms
         logger.info(
@@ -68,7 +71,7 @@ class MPC001LipReader:
         with tempfile.TemporaryDirectory(prefix=f"silent-vision-{window.session_id}-") as temp_dir:
             frames_path = Path(temp_dir) / f"{self.name}-{window.start_sequence}-{window.end_sequence}.npy"
             self._write_window_frames(window, frames_path)
-            completed = self._run_inference(frames_path)
+            completed = self._run_inference(frames_path, cancel_event=cancel_event)
         text = self._parse_hypothesis(completed.stdout)
         logger.info(
             "mpc001 predict completed reader=%s language=%s latency_ms=%s text_len=%s text=%s",
@@ -160,7 +163,7 @@ class MPC001LipReader:
             duration_ms,
         )
 
-    def _run_inference(self, frames_path: Path) -> subprocess.CompletedProcess[str]:
+    def _run_inference(self, frames_path: Path, cancel_event: object | None = None) -> subprocess.CompletedProcess[str]:
         command = [
             self.settings.mpc001_python,
             str(self.runner_path),
@@ -176,33 +179,50 @@ class MPC001LipReader:
         env = os.environ.copy()
         env.setdefault("HYDRA_FULL_ERROR", "1")
         logger.debug("mpc001 subprocess command reader=%s command=%s", self.name, command)
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=self.repo_dir,
-                env=env,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=self.settings.mpc001_timeout_seconds,
-                check=True,
-            )
-        except subprocess.TimeoutExpired:
-            logger.exception(
-                "mpc001 subprocess timed out reader=%s timeout_seconds=%s",
-                self.name,
-                self.settings.mpc001_timeout_seconds,
-            )
-            raise
-        except subprocess.CalledProcessError as exc:
+        process = subprocess.Popen(
+            command,
+            cwd=self.repo_dir,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        started = perf_counter()
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                if _cancelled(cancel_event):
+                    logger.info("mpc001 subprocess cancelled reader=%s pid=%s", self.name, process.pid)
+                    _terminate_process(process)
+                    raise LipInferenceCancelled(f"mpc001 subprocess cancelled for {self.name}")
+                elapsed = perf_counter() - started
+                if elapsed > self.settings.mpc001_timeout_seconds:
+                    logger.error(
+                        "mpc001 subprocess timed out reader=%s timeout_seconds=%s pid=%s",
+                        self.name,
+                        self.settings.mpc001_timeout_seconds,
+                        process.pid,
+                    )
+                    _terminate_process(process)
+                    raise subprocess.TimeoutExpired(command, self.settings.mpc001_timeout_seconds)
+        completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        if completed.returncode != 0:
             logger.error(
                 "mpc001 subprocess failed reader=%s returncode=%s stdout_tail=%r stderr_tail=%r",
                 self.name,
-                exc.returncode,
-                _tail(exc.stdout, enabled=self.settings.log_transcripts),
-                _tail(exc.stderr, enabled=True),
+                completed.returncode,
+                _tail(completed.stdout, enabled=self.settings.log_transcripts),
+                _tail(completed.stderr, enabled=True),
             )
-            raise
+            raise subprocess.CalledProcessError(
+                completed.returncode,
+                command,
+                output=completed.stdout,
+                stderr=completed.stderr,
+            )
         if completed.stderr.strip():
             logger.debug("mpc001 subprocess stderr reader=%s stderr_tail=%r", self.name, _tail(completed.stderr, True))
         return completed
@@ -212,6 +232,36 @@ class MPC001LipReader:
         if not match:
             raise RuntimeError(f"mpc001 output did not contain a 'hyp:' line: {stdout[-1000:]}")
         return match.group("text").strip()
+
+
+def _cancelled(cancel_event: object | None) -> bool:
+    if cancel_event is None:
+        return False
+    is_set = getattr(cancel_event, "is_set", None)
+    return bool(callable(is_set) and is_set())
+
+
+def _terminate_process(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    _signal_process_tree(process, signal.SIGTERM)
+    try:
+        process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        _signal_process_tree(process, signal.SIGKILL)
+        process.communicate()
+
+
+def _signal_process_tree(process: subprocess.Popen[str], sig: signal.Signals) -> None:
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        return
+    except Exception:
+        if sig == signal.SIGTERM:
+            process.terminate()
+        else:
+            process.kill()
 
 
 def _tail(value: str | None, enabled: bool, limit: int = 1200) -> str:

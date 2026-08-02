@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -127,11 +128,28 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             return False
         return True
 
-    async def run_inference_loop(initial_window: Any) -> None:
+    def is_live_stream(generation: int) -> bool:
+        return (
+            websocket.app.state.session_manager.is_current(session_id)
+            and active.streaming
+            and active.stream_generation == generation
+        )
+
+    async def cancel_active_inference(reason: str) -> None:
+        task = active.active_inference_task
+        active.latest_pending_window = None
+        if active.inference_cancel_event is not None:
+            active.inference_cancel_event.set()
+        if task is not None and not task.done():
+            logger.info("inference task cancelled session_id=%s reason=%s", session_id, reason)
+            task.cancel()
+            await asyncio.sleep(0)
+
+    async def run_inference_loop(initial_window: Any, generation: int) -> None:
         current = initial_window
         try:
             while current is not None:
-                if not websocket.app.state.session_manager.is_current(session_id):
+                if not is_live_stream(generation):
                     return
                 logger.info(
                     "inference window started session_id=%s window=%s-%s frames=%s",
@@ -149,8 +167,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     )
                 )
                 async with websocket.app.state.inference_lock:
-                    lip_result = await asyncio.to_thread(websocket.app.state.lip_engine.predict, current)
-                    if not websocket.app.state.session_manager.is_current(session_id):
+                    if not is_live_stream(generation):
+                        return
+                    cancel_event = active.inference_cancel_event
+                    lip_result = await asyncio.to_thread(
+                        websocket.app.state.lip_engine.predict,
+                        current,
+                        cancel_event,
+                    )
+                    if not is_live_stream(generation):
                         return
                     logger.info(
                         "lip candidates ready session_id=%s candidates=%s degraded=%s summary=%s",
@@ -211,7 +236,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                                 confidence=0.0,
                                 reason="MiniCPM failure",
                             )
-                        if not websocket.app.state.session_manager.is_current(session_id):
+                        if not is_live_stream(generation):
                             return
                         logger.info(
                             "semantic result session_id=%s language=%s confidence=%.3f text_len=%s reason=%s",
@@ -234,6 +259,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                             agent.model_dump(mode="json")
                             | {"sessionId": session_id, "timestamp": utc_now().isoformat()}
                         )
+                    if not is_live_stream(generation):
+                        return
                 current = active.latest_pending_window
                 active.latest_pending_window = None
                 if current is not None:
@@ -252,6 +279,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         finally:
             if active.active_inference_task is asyncio.current_task():
                 active.active_inference_task = None
+                active.inference_cancel_event = None
 
     def enqueue_inference(window: Any) -> None:
         task = active.active_inference_task
@@ -265,13 +293,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             )
             return
         active.latest_pending_window = None
+        active.inference_cancel_event = threading.Event()
         logger.info(
             "inference task created session_id=%s window=%s-%s",
             session_id,
             window.start_sequence,
             window.end_sequence,
         )
-        active.active_inference_task = asyncio.create_task(run_inference_loop(window))
+        active.active_inference_task = asyncio.create_task(run_inference_loop(window, active.stream_generation))
 
     await send_json(
         _event(
@@ -348,13 +377,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             if text is not None:
                 command_type = _parse_command(text)
                 if command_type == "stream.start":
+                    await cancel_active_inference("stream restarted")
                     active.reset_stream()
+                    sequence = 0
+                    reused_mouth_frames = 0
+                    last_mouth_image = None
                     logger.info("stream started session_id=%s", session_id)
                     await send_json(_event("stream.started", session_id))
                 elif command_type == "stream.stop":
-                    active.reset_stream()
-                    active.streaming = False
-                    active.latest_pending_window = None
+                    await cancel_active_inference("stream stopped")
+                    active.stop_stream()
+                    sequence = 0
+                    reused_mouth_frames = 0
+                    last_mouth_image = None
                     logger.info("stream stopped session_id=%s", session_id)
                     await send_json(_event("stream.stopped", session_id))
                 elif command_type == "ping":
@@ -428,7 +463,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         websocket.app.state.session_manager.disconnect(session_id)
     finally:
         logger.info("websocket cleanup session_id=%s active_inference_task=%s", session_id, active.active_inference_task is not None)
-        if active.active_inference_task is not None:
-            active.active_inference_task.cancel()
+        await cancel_active_inference("websocket cleanup")
+        active.stop_stream()
         websocket.app.state.session_manager.disconnect(session_id)
         _cleanup_temp(session_id)

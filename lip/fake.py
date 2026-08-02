@@ -20,7 +20,7 @@ class FakeLipReader:
         self._confidence = confidence
         self._fail = fail
 
-    def predict(self, window: MouthWindow) -> LipReadingCandidate:
+    def predict(self, window: MouthWindow, cancel_event: object | None = None) -> LipReadingCandidate:
         started = perf_counter()
         if self._fail:
             raise RuntimeError(f"{self.name} fake failure")

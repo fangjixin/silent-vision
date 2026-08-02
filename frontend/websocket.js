@@ -6,6 +6,7 @@ const state = {
   camera: null,
   parameters: { captureFps: 25, windowFrames: 75 },
   streaming: false,
+  connectionGeneration: 0,
 };
 
 function setText(id, value) {
@@ -25,30 +26,43 @@ function wsUrl(sessionId) {
   return `${scheme}//${window.location.host}/ws/${sessionId}`;
 }
 
-async function connect() {
+async function connect(connectionGeneration) {
   state.sessionId = await createSession();
-  state.ws = new WebSocket(wsUrl(state.sessionId));
-  state.ws.binaryType = "arraybuffer";
-  state.ws.onclose = (event) => {
-    console.info("Silent Vision WebSocket closed", {
-      code: event.code,
-      reason: event.reason,
-      wasClean: event.wasClean,
-      sessionId: state.sessionId,
-    });
-    setText("socketStatus", "closed");
-    state.streaming = false;
-    document.getElementById("startButton").disabled = false;
-    document.getElementById("stopButton").disabled = true;
+  if (connectionGeneration !== state.connectionGeneration) throw new Error("stale start cancelled");
+  const socketGeneration = connectionGeneration;
+  const socket = new WebSocket(wsUrl(state.sessionId));
+  state.ws = socket;
+  socket.binaryType = "arraybuffer";
+  socket.onmessage = (event) => {
+    if (state.ws !== socket || socketGeneration !== state.connectionGeneration) return;
+    handleEvent(JSON.parse(event.data));
   };
-  state.ws.onmessage = (event) => handleEvent(JSON.parse(event.data));
   await new Promise((resolve, reject) => {
-    state.ws.onopen = () => {
+    socket.onclose = (event) => {
+      if (state.ws !== socket || socketGeneration !== state.connectionGeneration) {
+        reject(new Error("stale websocket closed"));
+        return;
+      }
+      console.info("Silent Vision WebSocket closed", {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+        sessionId: state.sessionId,
+      });
+      setStoppedUiState();
+      reject(new Error("websocket closed before stream finished"));
+    };
+    socket.onopen = () => {
+      if (state.ws !== socket || socketGeneration !== state.connectionGeneration) {
+        reject(new Error("stale websocket opened"));
+        return;
+      }
       console.info("Silent Vision WebSocket opened", { sessionId: state.sessionId });
       setText("socketStatus", "connected");
       resolve();
     };
-    state.ws.onerror = (event) => {
+    socket.onerror = (event) => {
+      if (state.ws !== socket || socketGeneration !== state.connectionGeneration) return;
       console.error("Silent Vision WebSocket error", event);
       reject(new Error("websocket connection failed"));
     };
@@ -72,6 +86,7 @@ function handleEvent(event) {
     setText("agentStatus", event.action);
     setText("resultOutput", JSON.stringify(event, null, 2));
   }
+  if (event.type === "stream.stopped") setStoppedUiState();
   if (event.type === "error") setText("visionStatus", `${event.code}: ${event.message}`);
   if (event.type === "error") console.warn("Silent Vision server error", event);
 }
@@ -86,6 +101,21 @@ function resetUiForNewStream() {
   setText("agentStatus", "waiting");
   setText("candidateOutput", "");
   setText("resultOutput", "");
+}
+
+function setStoppedUiState() {
+  state.streaming = false;
+  setText("cameraStatus", "stopped");
+  setText("socketStatus", "closed");
+  setText("visionStatus", "stopped");
+  setText("bufferStatus", `0 / ${state.parameters.windowFrames || 75}`);
+  setText("lipStatus", "stopped");
+  setText("semanticStatus", "stopped");
+  setText("agentStatus", "stopped");
+  setText("candidateOutput", "");
+  setText("resultOutput", "");
+  document.getElementById("startButton").disabled = false;
+  document.getElementById("stopButton").disabled = true;
 }
 
 function stopCamera() {
@@ -105,6 +135,7 @@ function closeSocket() {
 }
 
 function cleanupCurrentStream() {
+  state.connectionGeneration += 1;
   state.streaming = false;
   stopCamera();
   closeSocket();
@@ -112,30 +143,38 @@ function cleanupCurrentStream() {
 
 document.getElementById("startButton").addEventListener("click", async () => {
   cleanupCurrentStream();
+  const connectionGeneration = state.connectionGeneration;
   resetUiForNewStream();
-  await connect();
-  state.ws.send(JSON.stringify({ type: "stream.start" }));
-  state.streaming = true;
-  state.camera = new CameraStreamer({
-    video: document.getElementById("cameraPreview"),
-    canvas: document.getElementById("captureCanvas"),
-    fps: state.parameters.captureFps || 25,
-    onFrame: (blob) => {
-      if (!state.streaming || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-      if (state.ws.bufferedAmount > 2_000_000) return;
-      state.ws.send(blob);
-    },
-  });
-  await state.camera.start();
-  setText("cameraStatus", "streaming");
   document.getElementById("startButton").disabled = true;
   document.getElementById("stopButton").disabled = false;
+  try {
+    await connect(connectionGeneration);
+    if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
+    state.ws.send(JSON.stringify({ type: "stream.start" }));
+    state.streaming = true;
+    state.camera = new CameraStreamer({
+      video: document.getElementById("cameraPreview"),
+      canvas: document.getElementById("captureCanvas"),
+      fps: state.parameters.captureFps || 25,
+      onFrame: (blob) => {
+        if (!state.streaming || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        if (state.ws.bufferedAmount > 2_000_000) return;
+        state.ws.send(blob);
+      },
+    });
+    await state.camera.start();
+    if (connectionGeneration !== state.connectionGeneration) return;
+    setText("cameraStatus", "streaming");
+  } catch (error) {
+    if (connectionGeneration !== state.connectionGeneration) return;
+    console.error("Silent Vision start failed", error);
+    cleanupCurrentStream();
+    setStoppedUiState();
+    setText("visionStatus", `start failed: ${error.message}`);
+  }
 });
 
 document.getElementById("stopButton").addEventListener("click", () => {
   cleanupCurrentStream();
-  setText("cameraStatus", "stopped");
-  setText("socketStatus", "closed");
-  document.getElementById("startButton").disabled = false;
-  document.getElementById("stopButton").disabled = true;
+  setStoppedUiState();
 });

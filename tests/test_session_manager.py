@@ -80,3 +80,24 @@ def test_next_window_appears_after_25_more_valid_frames():
     assert last.start_sequence == 26
     assert last.end_sequence == 100
     assert len(last.frames) == 75
+
+
+def test_stop_stream_clears_buffer_and_invalidates_existing_generation():
+    manager = SessionManager(pending_ttl=timedelta(seconds=30), window_frames=40, inference_stride=10)
+    created = manager.create_pending_session()
+    active = manager.activate(created.session_id)
+    active.reset_stream()
+    generation = active.stream_generation
+
+    for sequence in range(1, 41):
+        active.add_mouth_frame(_frame(sequence))
+
+    active.latest_pending_window = active.add_mouth_frame(_frame(41))
+    active.stop_stream()
+
+    assert active.streaming is False
+    assert active.stream_generation == generation + 1
+    assert len(active.frames) == 0
+    assert active.accepted_frame_count == 0
+    assert active.last_inference_frame_count == 0
+    assert active.latest_pending_window is None

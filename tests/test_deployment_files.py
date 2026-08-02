@@ -56,10 +56,41 @@ def test_smoke_scripts_exist_and_are_executable():
 def test_frontend_stream_lifecycle_cleans_up_between_starts():
     websocket_js = Path("frontend/websocket.js").read_text()
     assert "cleanupCurrentStream();" in websocket_js
+    assert "setStoppedUiState();" in websocket_js
+    assert "setText(\"visionStatus\", \"stopped\");" in websocket_js
+    assert "setText(\"lipStatus\", \"stopped\");" in websocket_js
+    assert "setText(\"semanticStatus\", \"stopped\");" in websocket_js
+    assert "setText(\"agentStatus\", \"stopped\");" in websocket_js
+    assert "setText(\"candidateOutput\", \"\");" in websocket_js
+    assert "setText(\"resultOutput\", \"\");" in websocket_js
+    assert "connectionGeneration" in websocket_js
+    assert "socketGeneration !== state.connectionGeneration" in websocket_js
     assert "state.ws.close(1000, \"client stopped stream\");" in websocket_js
     assert "state.ws.bufferedAmount > 2_000_000" in websocket_js
     assert "state.streaming = false;" in websocket_js
     assert "mouth reused" in websocket_js
+
+
+def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows():
+    websocket_py = Path("api/websocket.py").read_text()
+    manager_py = Path("session/manager.py").read_text()
+    inference_py = Path("lip/inference.py").read_text()
+    mpc001_py = Path("lip/mpc001.py").read_text()
+    assert "def stop_stream(self) -> None:" in manager_py
+    assert "stream_generation" in manager_py
+    assert "inference_cancel_event" in manager_py
+    assert "active.stop_stream()" in websocket_py
+    assert "cancel_active_inference(" in websocket_py
+    assert "cancel_active_inference(\"websocket cleanup\")" in websocket_py
+    assert "active.inference_cancel_event.set()" in websocket_py
+    assert "stream_generation" in websocket_py
+    assert "is_live_stream" in websocket_py
+    assert "cancel_event" in inference_py
+    assert "subprocess.Popen" in mpc001_py
+    assert "start_new_session=True" in mpc001_py
+    assert "os.killpg" in mpc001_py
+    assert "subprocess.run" not in mpc001_py
+    assert "mpc001 subprocess cancelled" in mpc001_py
 
 
 def test_real_mode_suppresses_noisy_third_party_warnings():
