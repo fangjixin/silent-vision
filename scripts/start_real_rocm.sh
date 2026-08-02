@@ -10,11 +10,15 @@ export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-*}"
 export MPC001_GPU_IDX="${MPC001_GPU_IDX:-0}"
 export MPC001_TIMEOUT_SECONDS="${MPC001_TIMEOUT_SECONDS:-180}"
 export MPC001_PYTHON="${MPC001_PYTHON:-/opt/venv/bin/python}"
+export MPC001_ENGLISH_CONFIG="${MPC001_ENGLISH_CONFIG:-$PERSISTENCE_ROOT/configs/LRS3_V_WER19.1_silent_vision.ini}"
+export MPC001_CHINESE_CONFIG="${MPC001_CHINESE_CONFIG:-$PERSISTENCE_ROOT/configs/CMLR_V_WER8.0_silent_vision.ini}"
 
 "$MPC001_PYTHON" - <<'PY'
 import sys
 import torch
 from importlib import metadata
+from pathlib import Path
+import os
 
 print("python:", sys.executable)
 print("torch:", torch.__version__)
@@ -34,6 +38,12 @@ if int(hub_version.split(".", 1)[0]) >= 1:
         "Run: /opt/venv/bin/python -m pip install --force-reinstall --no-deps "
         "'huggingface-hub>=0.30.0,<1.0.0'"
     )
+
+for key in ["MPC001_ENGLISH_CONFIG", "MPC001_CHINESE_CONFIG"]:
+    path = Path(os.environ[key])
+    print(f"{key}:", path)
+    if not path.exists():
+        raise SystemExit(f"{key} does not exist: {path}; run scripts/setup_amd_real.sh first")
 PY
 
 "$MPC001_PYTHON" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000

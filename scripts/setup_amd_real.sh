@@ -180,6 +180,35 @@ for src_base, target_dir in jobs:
         print("copied", target_dir / name)
 PY
 
+"$PYTHON_BIN" - <<'PY'
+from pathlib import Path
+from configparser import ConfigParser
+import os
+
+root = Path(os.environ["SV_ROOT"])
+repo = root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages"
+target_dir = root / "configs"
+target_dir.mkdir(parents=True, exist_ok=True)
+lm_weight = os.environ.get("MPC001_LM_WEIGHT", "0.0")
+
+configs = {
+    "LRS3_V_WER19.1.ini": "LRS3_V_WER19.1_silent_vision.ini",
+    "CMLR_V_WER8.0.ini": "CMLR_V_WER8.0_silent_vision.ini",
+}
+
+for source_name, target_name in configs.items():
+    source = repo / "configs" / source_name
+    target = target_dir / target_name
+    parser = ConfigParser()
+    parser.read(source)
+    if not parser.has_section("decode"):
+        raise SystemExit(f"missing [decode] section in {source}")
+    parser.set("decode", "lm_weight", lm_weight)
+    with target.open("w") as f:
+        parser.write(f)
+    print(f"wrote {target} with decode.lm_weight={lm_weight}")
+PY
+
 "$PYTHON_BIN" -m pip install --upgrade --force-reinstall --no-deps "huggingface-hub>=0.30.0,<1.0.0"
 check_transformers_stack
 "$PYTHON_BIN" - <<'PY'
