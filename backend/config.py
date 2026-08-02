@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     prototype_confidence_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
     prototype_top1_margin: float = Field(default=0.12, ge=0.0, le=1.0)
     prototype_prefer_personal: bool = True
+    allow_global_profile_write: bool = False
     window_frames: int = Field(default=75, ge=1)
     inference_stride: int = Field(default=25, ge=1)
     mouth_size: int = Field(default=96, ge=16)

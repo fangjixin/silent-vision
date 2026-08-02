@@ -165,6 +165,15 @@ def test_rejected_commands_do_not_call_llm_or_execute_actions():
     assert "action=\"reject\"" in agent_py
 
 
+def test_websocket_has_calibration_upload_path():
+    source = Path("api/websocket.py").read_text()
+
+    assert "calibration.start" in source
+    assert "calibration.saved" in source
+    assert "save_prototype_sample" in source
+    assert "profileId" in source
+
+
 def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows():
     websocket_py = Path("api/websocket.py").read_text()
     manager_py = Path("session/manager.py").read_text()

@@ -70,6 +70,25 @@ class CommandDecision(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CalibrationRequest(BaseModel):
+    type: Literal["calibration.start"] = "calibration.start"
+    profileId: str
+    intent: CommandIntentName
+    language: Language
+    phrase: str = ""
+    scope: Literal["personal", "global"] = "personal"
+
+
+class CalibrationSaved(BaseEvent):
+    type: Literal["calibration.saved"] = "calibration.saved"
+    profileId: str
+    scope: Literal["personal", "global"]
+    intent: CommandIntentName
+    samplePath: str
+    frames: int
+    detectedFrames: int
+
+
 class AgentResult(BaseModel):
     type: Literal["agent.result"] = "agent.result"
     action: AgentAction
