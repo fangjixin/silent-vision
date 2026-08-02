@@ -46,4 +46,4 @@ for key in ["MPC001_ENGLISH_CONFIG", "MPC001_CHINESE_CONFIG"]:
         raise SystemExit(f"{key} does not exist: {path}; run scripts/setup_amd_real.sh first")
 PY
 
-"$MPC001_PYTHON" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+"$MPC001_PYTHON" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --log-level "${LOG_LEVEL:-info}"

@@ -29,7 +29,13 @@ async function connect() {
   state.sessionId = await createSession();
   state.ws = new WebSocket(wsUrl(state.sessionId));
   state.ws.binaryType = "arraybuffer";
-  state.ws.onclose = () => {
+  state.ws.onclose = (event) => {
+    console.info("Silent Vision WebSocket closed", {
+      code: event.code,
+      reason: event.reason,
+      wasClean: event.wasClean,
+      sessionId: state.sessionId,
+    });
     setText("socketStatus", "closed");
     state.streaming = false;
     document.getElementById("startButton").disabled = false;
@@ -38,10 +44,14 @@ async function connect() {
   state.ws.onmessage = (event) => handleEvent(JSON.parse(event.data));
   await new Promise((resolve, reject) => {
     state.ws.onopen = () => {
+      console.info("Silent Vision WebSocket opened", { sessionId: state.sessionId });
       setText("socketStatus", "connected");
       resolve();
     };
-    state.ws.onerror = () => reject(new Error("websocket connection failed"));
+    state.ws.onerror = (event) => {
+      console.error("Silent Vision WebSocket error", event);
+      reject(new Error("websocket connection failed"));
+    };
   });
 }
 
@@ -63,6 +73,7 @@ function handleEvent(event) {
     setText("resultOutput", JSON.stringify(event, null, 2));
   }
   if (event.type === "error") setText("visionStatus", `${event.code}: ${event.message}`);
+  if (event.type === "error") console.warn("Silent Vision server error", event);
 }
 
 function resetUiForNewStream() {
