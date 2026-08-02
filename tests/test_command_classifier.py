@@ -1,5 +1,8 @@
+import numpy as np
+
+from backend.config import Settings
 from backend.schemas import CommandDecision
-from command.inference import reject_by_thresholds
+from command.inference import build_command_classifier, reject_by_thresholds
 from command.labels import CommandIntent
 
 
@@ -50,3 +53,25 @@ def test_command_decision_schema_serializes_logits_and_metadata():
     assert dumped["intent"] == "CHAT_OTHER"
     assert dumped["logits"] == [0.0, 0.1, 0.2]
     assert dumped["metadata"]["frames"] == 75
+
+
+def test_builds_prototype_backend(tmp_path, monkeypatch):
+    monkeypatch.setenv("PERSISTENCE_ROOT", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BACKEND", "prototype")
+
+    backend = build_command_classifier(Settings())
+
+    assert backend.__class__.__name__ == "PrototypeCommandClassifierBackend"
+
+
+def test_prototype_backend_rejects_without_samples(tmp_path, monkeypatch):
+    monkeypatch.setenv("PERSISTENCE_ROOT", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BACKEND", "prototype")
+
+    backend = build_command_classifier(Settings())
+    frames = np.zeros((25, 96, 96), dtype=np.uint8)
+    decision = backend.predict(frames, metadata={"profileId": "abc"})
+
+    assert decision.intent == "UNKNOWN"
+    assert decision.accepted is False
+    assert decision.reason == "no_prototypes"

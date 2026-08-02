@@ -65,7 +65,7 @@ class CommandDecision(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     margin: float = Field(ge=0.0, le=1.0)
     topK: list[dict[str, Any]]
-    logits: list[float]
+    logits: list[float] | dict[str, float]
     reason: str
     metadata: dict[str, Any] = Field(default_factory=dict)
 

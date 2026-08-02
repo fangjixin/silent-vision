@@ -12,6 +12,7 @@ from backend.config import Settings
 from backend.schemas import CommandDecision
 from command.labels import COMMAND_LABELS, EXECUTABLE_INTENTS, CommandIntent
 from command.model import CommandConformerClassifier
+from command.prototype import extract_roi_embedding, load_profile_prototypes, match_prototypes, sanitize_profile_id
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,75 @@ class TorchCommandClassifierBackend:
         )
 
 
+class PrototypeCommandClassifierBackend:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.root = settings.persistence_root
+
+    def predict(self, mouth_frames: np.ndarray, metadata: dict[str, object]) -> CommandDecision:
+        started = perf_counter()
+        embedding = extract_roi_embedding(mouth_frames, feature_dim=self.settings.prototype_feature_dim)
+        profile_id = _metadata_string(metadata, "profileId")
+        scopes: list[tuple[str, str | None]] = []
+        if self.settings.prototype_prefer_personal and profile_id:
+            scopes.append(("personal", profile_id))
+        scopes.append(("global", "global"))
+
+        last_match = None
+        last_scope = "none"
+        for scope, candidate_profile in scopes:
+            if candidate_profile is None:
+                continue
+            try:
+                sanitized_profile = sanitize_profile_id(candidate_profile)
+            except ValueError:
+                continue
+            samples = load_profile_prototypes(self.root, sanitized_profile)
+            if not samples:
+                continue
+            match = match_prototypes(
+                embedding,
+                samples,
+                confidence_threshold=self.settings.prototype_confidence_threshold,
+                margin_threshold=self.settings.prototype_top1_margin,
+            )
+            last_match = match
+            last_scope = scope
+            if match.accepted:
+                break
+
+        if last_match is None:
+            match = match_prototypes(
+                embedding,
+                [],
+                confidence_threshold=self.settings.prototype_confidence_threshold,
+                margin_threshold=self.settings.prototype_top1_margin,
+            )
+            last_match = match
+            last_scope = "none"
+
+        intent = CommandIntent(last_match.intent)
+        executable = last_match.accepted and intent in EXECUTABLE_INTENTS
+        result_metadata = {
+            **metadata,
+            "backend": "prototype",
+            "profileId": profile_id,
+            "profileScope": last_scope,
+            "latencyMs": int((perf_counter() - started) * 1000),
+        }
+        return CommandDecision(
+            intent=intent,
+            accepted=last_match.accepted,
+            executable=executable,
+            confidence=last_match.confidence,
+            margin=last_match.margin,
+            topK=last_match.top_k,
+            logits=last_match.logits,
+            reason=last_match.reason,
+            metadata=result_metadata,
+        )
+
+
 def _simple_visual_features(mouth_frames: np.ndarray, feature_dim: int) -> np.ndarray:
     frames = mouth_frames.astype("float32") / 255.0
     flat = frames.reshape(frames.shape[0], -1)
@@ -171,6 +241,11 @@ def _simple_visual_features(mouth_frames: np.ndarray, feature_dim: int) -> np.nd
     return np.tile(base, (1, repeats))[:, :feature_dim]
 
 
+def _metadata_string(metadata: dict[str, object], key: str) -> str | None:
+    value = metadata.get(key)
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def save_command_debug(settings: Settings, session_id: str, decision: CommandDecision) -> Path:
     output_dir = settings.debug_window_dir or settings.persistence_root / "logs" / "command-runs"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -182,4 +257,6 @@ def save_command_debug(settings: Settings, session_id: str, decision: CommandDec
 def build_command_classifier(settings: Settings) -> CommandClassifierBackend:
     if settings.command_backend == "torch":
         return TorchCommandClassifierBackend(settings)
+    if settings.command_backend == "prototype":
+        return PrototypeCommandClassifierBackend(settings)
     return FakeCommandClassifierBackend(settings)

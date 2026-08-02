@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     model_backend: Literal["fake", "real"] = "fake"
     recognition_mode: Literal["command", "transcription"] = "command"
-    command_backend: Literal["fake", "torch"] = "fake"
+    command_backend: Literal["fake", "torch", "prototype"] = "fake"
     persistence_root: Path = Path("/workspace/persistent/silent-vision")
     capture_fps: int = Field(default=25, ge=1, le=60)
     capture_countdown_seconds: int = Field(default=3, ge=0, le=10)
@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     command_classifier_checkpoint: Path | None = None
     command_fallback_transcription: bool = False
     command_feature_dim: int = Field(default=256, ge=1)
+    prototype_feature_dim: int = Field(default=128, ge=1)
+    prototype_confidence_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
+    prototype_top1_margin: float = Field(default=0.12, ge=0.0, le=1.0)
+    prototype_prefer_personal: bool = True
     window_frames: int = Field(default=75, ge=1)
     inference_stride: int = Field(default=25, ge=1)
     mouth_size: int = Field(default=96, ge=16)
