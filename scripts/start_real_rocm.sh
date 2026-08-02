@@ -3,7 +3,7 @@ set -euo pipefail
 
 export MODEL_BACKEND="${MODEL_BACKEND:-real}"
 export RECOGNITION_MODE="${RECOGNITION_MODE:-command}"
-export COMMAND_BACKEND="${COMMAND_BACKEND:-fake}"
+export COMMAND_BACKEND="${COMMAND_BACKEND:-prototype}"
 export PERSISTENCE_ROOT="${PERSISTENCE_ROOT:-/workspace/persistent/silent-vision}"
 export MPC001_REPO_DIR="${MPC001_REPO_DIR:-$PERSISTENCE_ROOT/repos/Visual_Speech_Recognition_for_Multiple_Languages}"
 export HF_HOME="${HF_HOME:-$PERSISTENCE_ROOT/cache/huggingface}"

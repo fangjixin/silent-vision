@@ -185,6 +185,18 @@ def test_frontend_has_prototype_calibration_ui():
     assert "calibration.start" in js
 
 
+def test_prototype_scripts_and_startup_defaults_exist():
+    assert Path("scripts/inspect_prototypes.py").exists()
+    assert Path("scripts/build_global_prototypes.py").exists()
+
+    oneclick = Path("scripts/amd_real_oneclick.sh").read_text()
+    readme = Path("README.md").read_text()
+
+    assert "COMMAND_BACKEND=prototype" in oneclick
+    assert "profiles/global" in readme
+    assert "Personal Profile" in readme
+
+
 def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows():
     websocket_py = Path("api/websocket.py").read_text()
     manager_py = Path("session/manager.py").read_text()

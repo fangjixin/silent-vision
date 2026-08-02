@@ -12,12 +12,51 @@ AMD ROCm command-mode startup:
 ```bash
 cd /workspace/template-repos/template-907/repo
 export RECOGNITION_MODE=command
-export COMMAND_BACKEND=fake
+export COMMAND_BACKEND=prototype
 export DEBUG_DUMP_WINDOWS=true
 bash scripts/amd_real_oneclick.sh
 ```
 
-After collecting command samples, train a classifier:
+Prototype mode is the recommended first real workflow. It does not try to
+transcribe arbitrary Chinese. It compares the current mouth ROI clip against
+saved command examples.
+
+Use the browser Calibration panel first:
+
+1. Pick an intent such as `LIGHT_ON`.
+2. Type the phrase you are recording, for example `你好，请帮我打开灯`.
+3. Click `Save Sample`.
+4. Record 5-10 samples per command.
+5. Press `Start` to test recognition.
+
+Samples are saved under anonymous browser profiles:
+
+```text
+/workspace/persistent/silent-vision/profiles/<profileId>/<INTENT>/<sampleId>/
+  original.webm
+  mouth_roi.npy
+  embedding.npy
+  metadata.json
+```
+
+`Personal Profile` means the current browser's anonymous `profileId`. It is
+used first when matching commands. `Global Profile` means server-provided
+defaults shared by all browsers:
+
+```text
+/workspace/persistent/silent-vision/profiles/global/
+```
+
+To promote your personal samples into the global defaults:
+
+```bash
+/opt/venv/bin/python scripts/inspect_prototypes.py --root /workspace/persistent/silent-vision
+/opt/venv/bin/python scripts/build_global_prototypes.py \
+  --root /workspace/persistent/silent-vision \
+  --from-profile <profileId>
+```
+
+Classifier training is still available after enough data exists:
 
 ```bash
 /opt/venv/bin/python scripts/record_command_manifest.py --output /workspace/persistent/silent-vision/commands/manifest.jsonl
