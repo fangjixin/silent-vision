@@ -147,7 +147,7 @@ for src_base, target_dir in jobs:
         print("copied", target_dir / name)
 PY
 
-"$PYTHON_BIN" -m pip install --upgrade huggingface_hub
+"$PYTHON_BIN" -m pip install --upgrade "huggingface-hub>=0.30.0,<1.0.0"
 "$PYTHON_BIN" - <<'PY'
 from huggingface_hub import snapshot_download
 import os

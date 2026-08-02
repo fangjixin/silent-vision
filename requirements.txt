@@ -8,6 +8,7 @@ mediapipe==0.10.14
 python-multipart>=0.0.32,<1.0.0
 orjson>=3.11.9,<4.0.0
 transformers==4.51.0
+huggingface-hub>=0.30.0,<1.0.0
 accelerate>=1.14.0,<2.0.0
 safetensors>=0.7.0,<1.0.0
 Pillow==10.4.0

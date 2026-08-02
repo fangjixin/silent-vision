@@ -40,6 +40,8 @@ def test_smoke_scripts_exist_and_are_executable():
     assert "scripts/setup_amd_real.sh" in oneclick.read_text()
     assert "scripts/start_real_rocm.sh" in oneclick.read_text()
     assert "rc-tunnel" not in oneclick.read_text()
+    assert "huggingface-hub>=0.30.0,<1.0.0" in setup.read_text()
+    assert "pip install --upgrade huggingface_hub" not in setup.read_text()
 
 
 def test_frontend_stream_lifecycle_cleans_up_between_starts():
@@ -65,6 +67,7 @@ def test_requirements_use_current_compatible_real_mode_versions():
     assert "uvicorn[standard]>=0.52.0,<1.0.0" in requirements
     assert "pydantic>=2.13.4,<3.0.0" in requirements
     assert "transformers==4.51.0" in requirements
+    assert "huggingface-hub>=0.30.0,<1.0.0" in requirements
     assert "numpy>=1.26.4,<2.0.0" in requirements
     assert "opencv-python-headless>=4.10.0,<4.11.0" in requirements
     assert "mediapipe==0.10.14" in requirements
