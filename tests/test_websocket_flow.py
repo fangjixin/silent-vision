@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from backend.config import Settings
 from backend.main import create_app
+from vision.face import FaceDetectionResult
 from tests.conftest import make_jpeg
 
 
@@ -66,3 +67,30 @@ def test_websocket_allows_wildcard_origin():
         headers={"origin": "https://rc-b80bfa02edcceefa.radeon.firstdg.ai"},
     ) as websocket:
         assert websocket.receive_json()["type"] == "session.ready"
+
+
+def test_invalid_mouth_box_is_recoverable_websocket_error():
+    class DegenerateMouthDetector:
+        def detect(self, image_rgb):
+            return FaceDetectionResult(
+                face_detected=True,
+                face_count=1,
+                landmarks=[(0.5, 0.5), (0.5, 0.5), (0.5, 0.5), (0.5, 0.5)],
+            )
+
+    app = create_app(Settings(model_backend="fake"))
+    app.state.face_detector = DegenerateMouthDetector()
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+
+    with client.websocket_connect(f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}) as websocket:
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json({"type": "stream.start"})
+        assert websocket.receive_json()["type"] == "stream.started"
+        websocket.send_bytes(make_jpeg())
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "INVALID_MOUTH_BOX"
+        assert error["recoverable"] is True
+        websocket.send_json({"type": "ping"})
+        assert websocket.receive_json()["type"] == "pong"

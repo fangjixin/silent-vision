@@ -66,6 +66,19 @@ def _origin_allowed(origin: str, allowed_origins: set[str]) -> bool:
     return not origin or "*" in allowed_origins or origin in allowed_origins
 
 
+def _landmark_bounds(landmarks: list[tuple[float, float]]) -> dict[str, float] | None:
+    if not landmarks:
+        return None
+    xs = [x for x, _ in landmarks]
+    ys = [y for _, y in landmarks]
+    return {
+        "minX": min(xs),
+        "maxX": max(xs),
+        "minY": min(ys),
+        "maxY": max(ys),
+    }
+
+
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     settings = websocket.app.state.settings
@@ -381,7 +394,26 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                         reused_last_mouth_crop=True,
                     )
                 continue
-            crop = crop_mouth(image, detection.landmarks, settings.mouth_size)
+            try:
+                crop = crop_mouth(image, detection.landmarks, settings.mouth_size)
+            except ValueError as exc:
+                logger.warning(
+                    "mouth crop rejected session_id=%s sequence=%s reason=%s landmark_bounds=%s",
+                    session_id,
+                    sequence,
+                    exc,
+                    _landmark_bounds(detection.landmarks),
+                )
+                await send_error("vision", ErrorCode.INVALID_MOUTH_BOX, str(exc), True)
+                if last_mouth_image is not None and reused_mouth_frames < MAX_REUSED_MOUTH_FRAMES:
+                    reused_mouth_frames += 1
+                    await publish_buffered_frame(
+                        MouthFrame(sequence=sequence, received_at_ms=received_at_ms, image=last_mouth_image.copy()),
+                        face_detected=True,
+                        mouth_box=None,
+                        reused_last_mouth_crop=True,
+                    )
+                continue
             last_mouth_image = crop.image.copy()
             reused_mouth_frames = 0
             frame = MouthFrame(sequence=sequence, received_at_ms=received_at_ms, image=crop.image)
