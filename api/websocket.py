@@ -355,6 +355,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         )
         await send_json(_event("metrics.update", session_id, **_metrics(active)))
         if window is not None:
+            active.commit_stream()
+            await send_json(_event("stream.committed", session_id))
             logger.info(
                 "mouth window ready session_id=%s window=%s-%s buffered=%s accepted=%s reused=%s",
                 session_id,
@@ -392,12 +394,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     last_mouth_image = None
                     logger.info("stream stopped session_id=%s", session_id)
                     await send_json(_event("stream.stopped", session_id))
+                elif command_type == "stream.commit":
+                    active.commit_stream()
+                    logger.info("stream committed session_id=%s", session_id)
+                    await send_json(_event("stream.committed", session_id))
                 elif command_type == "ping":
                     await send_json(_event("pong", session_id))
                 continue
 
             data = message.get("bytes")
-            if data is None or not active.streaming:
+            if data is None or not active.accepting_frames:
                 continue
 
             sequence += 1

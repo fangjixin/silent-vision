@@ -7,6 +7,7 @@ const state = {
   parameters: { captureFps: 25, windowFrames: 75 },
   streaming: false,
   connectionGeneration: 0,
+  phase: "idle",
 };
 
 function setText(id, value) {
@@ -49,6 +50,11 @@ async function connect(connectionGeneration) {
         wasClean: event.wasClean,
         sessionId: state.sessionId,
       });
+      state.ws = null;
+      if (state.phase === "done") {
+        setText("socketStatus", "closed");
+        return;
+      }
       setStoppedUiState();
       reject(new Error("websocket closed before stream finished"));
     };
@@ -75,9 +81,13 @@ function handleEvent(event) {
     const status = event.faceDetected ? "mouth detected" : "mouth reused";
     setText("visionStatus", status);
   }
-  if (event.type === "buffer.progress") setText("bufferStatus", `${event.bufferedFrames} / ${event.requiredFrames}`);
+  if (event.type === "buffer.progress") {
+    setText("bufferStatus", `${event.bufferedFrames} / ${event.requiredFrames}`);
+    autoSubmitWhenBufferFull(event);
+  }
   if (event.type === "lip.candidates") {
     setText("lipStatus", "candidates ready");
+    setText("semanticStatus", "running");
     setText("candidateOutput", JSON.stringify(event.candidates, null, 2));
   }
   if (event.type === "semantic.result") setText("semanticStatus", `${event.language}: ${event.text}`);
@@ -85,13 +95,16 @@ function handleEvent(event) {
   if (event.type === "agent.result") {
     setText("agentStatus", event.action);
     setText("resultOutput", JSON.stringify(event, null, 2));
+    setDoneUiState();
   }
   if (event.type === "stream.stopped") setStoppedUiState();
+  if (event.type === "stream.committed") setText("visionStatus", "submitted");
   if (event.type === "error") setText("visionStatus", `${event.code}: ${event.message}`);
   if (event.type === "error") console.warn("Silent Vision server error", event);
 }
 
 function resetUiForNewStream() {
+  state.phase = "recording";
   setText("cameraStatus", "starting");
   setText("socketStatus", "connecting");
   setText("visionStatus", "waiting");
@@ -104,6 +117,7 @@ function resetUiForNewStream() {
 }
 
 function setStoppedUiState() {
+  state.phase = "idle";
   state.streaming = false;
   setText("cameraStatus", "stopped");
   setText("socketStatus", "closed");
@@ -116,6 +130,40 @@ function setStoppedUiState() {
   setText("resultOutput", "");
   document.getElementById("startButton").disabled = false;
   document.getElementById("stopButton").disabled = true;
+}
+
+function setAnalyzingUiState() {
+  state.phase = "analyzing";
+  state.streaming = false;
+  setText("cameraStatus", "recorded");
+  setText("socketStatus", "connected");
+  setText("visionStatus", "submitted");
+  setText("lipStatus", "waiting");
+  setText("semanticStatus", "waiting");
+  setText("agentStatus", "waiting");
+  document.getElementById("startButton").disabled = true;
+  document.getElementById("stopButton").disabled = false;
+}
+
+function setDoneUiState() {
+  state.phase = "done";
+  state.streaming = false;
+  stopCamera();
+  setText("cameraStatus", "done");
+  setText("agentStatus", "done");
+  document.getElementById("startButton").disabled = false;
+  document.getElementById("stopButton").disabled = true;
+}
+
+function autoSubmitWhenBufferFull(event) {
+  if (state.phase !== "recording") return;
+  if (event.bufferedFrames < event.requiredFrames) return;
+  stopCamera();
+  state.streaming = false;
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "stream.commit" }));
+  }
+  setAnalyzingUiState();
 }
 
 function stopCamera() {

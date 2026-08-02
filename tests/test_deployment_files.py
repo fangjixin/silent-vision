@@ -55,6 +55,8 @@ def test_smoke_scripts_exist_and_are_executable():
 
 def test_frontend_stream_lifecycle_cleans_up_between_starts():
     websocket_js = Path("frontend/websocket.js").read_text()
+    index_html = Path("frontend/index.html").read_text()
+    assert '<button id="stopButton" type="button" disabled>Cancel</button>' in index_html
     assert "cleanupCurrentStream();" in websocket_js
     assert "setStoppedUiState();" in websocket_js
     assert "setText(\"visionStatus\", \"stopped\");" in websocket_js
@@ -71,6 +73,28 @@ def test_frontend_stream_lifecycle_cleans_up_between_starts():
     assert "mouth reused" in websocket_js
 
 
+def test_frontend_one_shot_capture_auto_submits_full_buffer_without_cancelling_inference():
+    websocket_js = Path("frontend/websocket.js").read_text()
+    assert "phase: \"idle\"" in websocket_js
+    assert "autoSubmitWhenBufferFull(event);" in websocket_js
+    assert "function autoSubmitWhenBufferFull(event)" in websocket_js
+    assert "setAnalyzingUiState();" in websocket_js
+    assert "setDoneUiState();" in websocket_js
+    assert "cameraStatus\", \"recorded\"" in websocket_js
+    assert "semanticStatus\", \"running\"" in websocket_js
+    assert "agentStatus\", \"done\"" in websocket_js
+    assert "if (state.phase !== \"recording\") return;" in websocket_js
+    assert "event.bufferedFrames < event.requiredFrames" in websocket_js
+    assert "stopCamera();" in websocket_js
+    assert "state.streaming = false;" in websocket_js
+    assert "state.ws.send(JSON.stringify({ type: \"stream.stop\" }));" in websocket_js
+    assert "state.ws.send(JSON.stringify({ type: \"stream.commit\" }));" in websocket_js
+    assert "function autoSubmitWhenBufferFull" in websocket_js
+    auto_submit_block = websocket_js.split("function autoSubmitWhenBufferFull", 1)[1].split("function ", 1)[0]
+    assert "stream.stop" not in auto_submit_block
+    assert "stream.commit" in auto_submit_block
+
+
 def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows():
     websocket_py = Path("api/websocket.py").read_text()
     manager_py = Path("session/manager.py").read_text()
@@ -80,6 +104,9 @@ def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows
     assert "stream_generation" in manager_py
     assert "inference_cancel_event" in manager_py
     assert "active.stop_stream()" in websocket_py
+    assert "active.commit_stream()" in websocket_py
+    assert "active.accepting_frames" in websocket_py
+    assert "stream.committed" in websocket_py
     assert "cancel_active_inference(" in websocket_py
     assert "cancel_active_inference(\"websocket cleanup\")" in websocket_py
     assert "active.inference_cancel_event.set()" in websocket_py

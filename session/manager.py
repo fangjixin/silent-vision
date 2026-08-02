@@ -38,6 +38,7 @@ class ActiveSession:
     inference_cancel_event: object | None = None
     latest_pending_window: MouthWindow | None = None
     streaming: bool = False
+    accepting_frames: bool = False
     stream_generation: int = 0
 
     def reset_stream(self) -> None:
@@ -46,6 +47,7 @@ class ActiveSession:
         self.last_inference_frame_count = 0
         self.latest_pending_window = None
         self.streaming = True
+        self.accepting_frames = True
         self.stream_generation += 1
 
     def stop_stream(self) -> None:
@@ -54,7 +56,11 @@ class ActiveSession:
         self.last_inference_frame_count = 0
         self.latest_pending_window = None
         self.streaming = False
+        self.accepting_frames = False
         self.stream_generation += 1
+
+    def commit_stream(self) -> None:
+        self.accepting_frames = False
 
     def add_mouth_frame(self, frame: MouthFrame) -> MouthWindow | None:
         if len(self.frames) == self.window_frames:

@@ -101,3 +101,17 @@ def test_stop_stream_clears_buffer_and_invalidates_existing_generation():
     assert active.accepted_frame_count == 0
     assert active.last_inference_frame_count == 0
     assert active.latest_pending_window is None
+
+
+def test_commit_stream_stops_accepting_frames_without_invalidating_inference():
+    manager = SessionManager(pending_ttl=timedelta(seconds=30), window_frames=40, inference_stride=10)
+    created = manager.create_pending_session()
+    active = manager.activate(created.session_id)
+    active.reset_stream()
+    generation = active.stream_generation
+
+    active.commit_stream()
+
+    assert active.streaming is True
+    assert active.accepting_frames is False
+    assert active.stream_generation == generation
