@@ -66,6 +66,8 @@ def test_requirements_use_current_compatible_real_mode_versions():
     assert "pydantic>=2.13.4,<3.0.0" in requirements
     assert "transformers==4.51.0" in requirements
     assert "minicpmo-utils>=1.0.6,<2.0.0" in requirements
+    assert "Pillow==10.4.0" in requirements
+    assert "Pillow>=12.0.0" not in requirements
     assert "librosa>=0.11.0,<1.0.0" in requirements
     assert "soundfile>=0.14.0,<1.0.0" in requirements
     assert "torch" not in requirements
