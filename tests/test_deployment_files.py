@@ -65,9 +65,12 @@ def test_requirements_use_current_compatible_real_mode_versions():
     assert "uvicorn[standard]>=0.52.0,<1.0.0" in requirements
     assert "pydantic>=2.13.4,<3.0.0" in requirements
     assert "transformers==4.51.0" in requirements
-    assert "minicpmo-utils>=1.0.6,<2.0.0" in requirements
+    assert "numpy>=1.26.4,<2.0.0" in requirements
+    assert "opencv-python-headless>=4.10.0,<4.11.0" in requirements
+    assert "mediapipe==0.10.14" in requirements
+    assert "minicpmo-utils==1.0.6" in requirements
     assert "Pillow==10.4.0" in requirements
     assert "Pillow>=12.0.0" not in requirements
-    assert "librosa>=0.11.0,<1.0.0" in requirements
-    assert "soundfile>=0.14.0,<1.0.0" in requirements
+    assert "librosa==0.9.0" in requirements
+    assert "soundfile==0.12.1" in requirements
     assert "torch" not in requirements
