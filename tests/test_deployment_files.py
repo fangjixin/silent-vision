@@ -42,6 +42,9 @@ def test_smoke_scripts_exist_and_are_executable():
     assert "rc-tunnel" not in oneclick.read_text()
     assert "huggingface-hub>=0.30.0,<1.0.0" in setup.read_text()
     assert "pip install --upgrade huggingface_hub" not in setup.read_text()
+    assert "--force-reinstall --no-deps" in setup.read_text()
+    assert "check_transformers_stack" in setup.read_text()
+    assert "huggingface-hub must be <1.0" in start.read_text()
 
 
 def test_frontend_stream_lifecycle_cleans_up_between_starts():

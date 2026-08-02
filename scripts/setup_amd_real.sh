@@ -26,6 +26,37 @@ if torch.version.hip is None or not torch.cuda.is_available():
 PY
 }
 
+check_transformers_stack() {
+  "$PYTHON_BIN" - <<'PY'
+from importlib import metadata
+
+def version(name: str) -> str:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        raise SystemExit(f"{name} is not installed")
+
+hub_version = version("huggingface-hub")
+transformers_version = version("transformers")
+tokenizers_version = version("tokenizers")
+
+print("transformers:", transformers_version)
+print("tokenizers:", tokenizers_version)
+print("huggingface-hub:", hub_version)
+
+major = int(hub_version.split(".", 1)[0])
+if major >= 1:
+    raise SystemExit(
+        "huggingface-hub must be <1.0 for transformers 4.51.0; "
+        f"found {hub_version}"
+    )
+
+from transformers import AutoModel, AutoTokenizer
+
+print("transformers imports:", AutoModel.__name__, AutoTokenizer.__name__)
+PY
+}
+
 check_rocm_python
 
 apt-get update || true
@@ -35,7 +66,9 @@ command -v aria2c
 
 "$PYTHON_BIN" -m pip install --upgrade pip
 "$PYTHON_BIN" -m pip install --upgrade -r requirements.txt
+"$PYTHON_BIN" -m pip install --upgrade --force-reinstall --no-deps "huggingface-hub>=0.30.0,<1.0.0"
 check_rocm_python
+check_transformers_stack
 
 "$PYTHON_BIN" - <<'PY'
 import mediapipe as mp
@@ -147,7 +180,8 @@ for src_base, target_dir in jobs:
         print("copied", target_dir / name)
 PY
 
-"$PYTHON_BIN" -m pip install --upgrade "huggingface-hub>=0.30.0,<1.0.0"
+"$PYTHON_BIN" -m pip install --upgrade --force-reinstall --no-deps "huggingface-hub>=0.30.0,<1.0.0"
+check_transformers_stack
 "$PYTHON_BIN" - <<'PY'
 from huggingface_hub import snapshot_download
 import os

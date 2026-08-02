@@ -14,6 +14,7 @@ export MPC001_PYTHON="${MPC001_PYTHON:-/opt/venv/bin/python}"
 "$MPC001_PYTHON" - <<'PY'
 import sys
 import torch
+from importlib import metadata
 
 print("python:", sys.executable)
 print("torch:", torch.__version__)
@@ -22,6 +23,17 @@ print("cuda available:", torch.cuda.is_available())
 print("device count:", torch.cuda.device_count())
 if torch.version.hip is None or not torch.cuda.is_available():
     raise SystemExit("ROCm PyTorch is not available; refusing to start real mode")
+
+hub_version = metadata.version("huggingface-hub")
+transformers_version = metadata.version("transformers")
+print("transformers:", transformers_version)
+print("huggingface-hub:", hub_version)
+if int(hub_version.split(".", 1)[0]) >= 1:
+    raise SystemExit(
+        "huggingface-hub must be <1.0 for transformers 4.51.0. "
+        "Run: /opt/venv/bin/python -m pip install --force-reinstall --no-deps "
+        "'huggingface-hub>=0.30.0,<1.0.0'"
+    )
 PY
 
 "$MPC001_PYTHON" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
