@@ -8,12 +8,21 @@ export class CameraStreamer {
     this.timer = null;
   }
 
-  async start() {
+  async startPreview() {
     this.stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     this.video.srcObject = this.stream;
     await this.video.play();
+  }
+
+  startCapture() {
+    if (this.timer) return;
     const intervalMs = Math.round(1000 / this.fps);
     this.timer = window.setInterval(() => this.capture(), intervalMs);
+  }
+
+  async start() {
+    await this.startPreview();
+    this.startCapture();
   }
 
   capture() {

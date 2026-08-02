@@ -4,7 +4,7 @@ const state = {
   ws: null,
   sessionId: null,
   camera: null,
-  parameters: { captureFps: 25, windowFrames: 75 },
+  parameters: { captureFps: 25, windowFrames: 75, captureCountdownSeconds: 3 },
   streaming: false,
   connectionGeneration: 0,
   phase: "idle",
@@ -104,7 +104,7 @@ function handleEvent(event) {
 }
 
 function resetUiForNewStream() {
-  state.phase = "recording";
+  state.phase = "preparing";
   setText("cameraStatus", "starting");
   setText("socketStatus", "connecting");
   setText("visionStatus", "waiting");
@@ -114,6 +114,20 @@ function resetUiForNewStream() {
   setText("agentStatus", "waiting");
   setText("candidateOutput", "");
   setText("resultOutput", "");
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function runCaptureCountdown(connectionGeneration) {
+  const seconds = state.parameters.captureCountdownSeconds ?? 3;
+  for (let remaining = seconds; remaining > 0; remaining -= 1) {
+    if (connectionGeneration !== state.connectionGeneration) throw new Error("countdown cancelled");
+    setText("cameraStatus", `get ready: ${remaining}`);
+    await delay(1000);
+  }
+  if (connectionGeneration !== state.connectionGeneration) throw new Error("countdown cancelled");
 }
 
 function setStoppedUiState() {
@@ -198,8 +212,6 @@ document.getElementById("startButton").addEventListener("click", async () => {
   try {
     await connect(connectionGeneration);
     if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
-    state.ws.send(JSON.stringify({ type: "stream.start" }));
-    state.streaming = true;
     state.camera = new CameraStreamer({
       video: document.getElementById("cameraPreview"),
       canvas: document.getElementById("captureCanvas"),
@@ -210,9 +222,14 @@ document.getElementById("startButton").addEventListener("click", async () => {
         state.ws.send(blob);
       },
     });
-    await state.camera.start();
+    await state.camera.startPreview();
+    await runCaptureCountdown(connectionGeneration);
     if (connectionGeneration !== state.connectionGeneration) return;
-    setText("cameraStatus", "streaming");
+    state.ws.send(JSON.stringify({ type: "stream.start" }));
+    state.phase = "recording";
+    state.streaming = true;
+    state.camera.startCapture();
+    setText("cameraStatus", "recording");
   } catch (error) {
     if (connectionGeneration !== state.connectionGeneration) return;
     console.error("Silent Vision start failed", error);

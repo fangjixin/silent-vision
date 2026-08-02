@@ -75,9 +75,16 @@ def test_frontend_stream_lifecycle_cleans_up_between_starts():
 
 def test_frontend_one_shot_capture_auto_submits_full_buffer_without_cancelling_inference():
     websocket_js = Path("frontend/websocket.js").read_text()
+    camera_js = Path("frontend/camera.js").read_text()
     assert "phase: \"idle\"" in websocket_js
     assert "autoSubmitWhenBufferFull(event);" in websocket_js
     assert "function autoSubmitWhenBufferFull(event)" in websocket_js
+    assert "runCaptureCountdown(connectionGeneration);" in websocket_js
+    assert "captureCountdownSeconds" in websocket_js
+    assert "await state.camera.startPreview();" in websocket_js
+    assert "state.camera.startCapture();" in websocket_js
+    assert "async startPreview()" in camera_js
+    assert "startCapture()" in camera_js
     assert "setAnalyzingUiState();" in websocket_js
     assert "setDoneUiState();" in websocket_js
     assert "cameraStatus\", \"recorded\"" in websocket_js
@@ -118,6 +125,19 @@ def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows
     assert "os.killpg" in mpc001_py
     assert "subprocess.run" not in mpc001_py
     assert "mpc001 subprocess cancelled" in mpc001_py
+
+
+def test_backend_debug_dump_writes_raw_frame_overlay_contact_sheet():
+    websocket_py = Path("api/websocket.py").read_text()
+    base_py = Path("lip/base.py").read_text()
+    assert "debug_image" in base_py
+    assert "debug_mouth_box" in base_py
+    assert "debug_landmarks" in base_py
+    assert "captureCountdownSeconds" in websocket_py
+    assert "_dump_raw_debug_window" in websocket_py
+    assert "raw_png" in websocket_py
+    assert "ImageDraw.Draw" in websocket_py
+    assert "debug_image=image.copy()" in websocket_py
 
 
 def test_real_mode_suppresses_noisy_third_party_warnings():

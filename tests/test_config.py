@@ -12,6 +12,7 @@ def test_settings_defaults_use_fake_backend_and_persistence_root():
     assert settings.inference_stride == 25
     assert settings.mouth_size == 96
     assert settings.capture_fps == 25
+    assert settings.capture_countdown_seconds == 3
     assert settings.log_level == "INFO"
     assert settings.debug_dump_windows is False
 

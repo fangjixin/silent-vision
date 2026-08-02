@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from PIL import Image, ImageDraw
 
 from backend.schemas import ErrorCode, ErrorEvent, SemanticResult, utc_now
 from lip.base import MouthFrame
@@ -78,6 +79,77 @@ def _landmark_bounds(landmarks: list[tuple[float, float]]) -> dict[str, float] |
         "minY": min(ys),
         "maxY": max(ys),
     }
+
+
+def _debug_box_value(box: object, key: str) -> float | None:
+    if isinstance(box, dict):
+        value = box.get(key)
+        return float(value) if isinstance(value, int | float) else None
+    value = getattr(box, key, None)
+    return float(value) if isinstance(value, int | float) else None
+
+
+def _draw_debug_frame(frame: MouthFrame, size: tuple[int, int]) -> Image.Image:
+    if frame.debug_image is None:
+        return Image.new("RGB", size, (32, 32, 32))
+
+    image = Image.fromarray(frame.debug_image).resize(size, Image.Resampling.BOX)
+    draw = ImageDraw.Draw(image)
+    scale_x = size[0]
+    scale_y = size[1]
+
+    box = frame.debug_mouth_box
+    if box is not None:
+        x = _debug_box_value(box, "x")
+        y = _debug_box_value(box, "y")
+        width = _debug_box_value(box, "width")
+        height = _debug_box_value(box, "height")
+        if x is not None and y is not None and width is not None and height is not None:
+            draw.rectangle(
+                [
+                    int(x * scale_x),
+                    int(y * scale_y),
+                    int((x + width) * scale_x),
+                    int((y + height) * scale_y),
+                ],
+                outline=(255, 48, 48),
+                width=2,
+            )
+
+    for landmark_x, landmark_y in frame.debug_landmarks:
+        center_x = int(landmark_x * scale_x)
+        center_y = int(landmark_y * scale_y)
+        draw.ellipse([center_x - 2, center_y - 2, center_x + 2, center_y + 2], fill=(48, 255, 48))
+
+    draw.text((4, 4), str(frame.sequence), fill=(255, 255, 0))
+    return image
+
+
+def _dump_raw_debug_window(settings: Any, window: Any) -> None:
+    if not settings.debug_dump_windows:
+        return
+    output_dir = settings.debug_window_dir or settings.persistence_root / "logs" / "mouth-windows"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cell_size = (160, 120)
+    columns = 5
+    rows = (len(window.frames) + columns - 1) // columns
+    sheet = Image.new("RGB", (cell_size[0] * columns, cell_size[1] * rows), (16, 16, 16))
+    for index, frame in enumerate(window.frames):
+        tile = _draw_debug_frame(frame, cell_size)
+        x = (index % columns) * cell_size[0]
+        y = (index // columns) * cell_size[1]
+        sheet.paste(tile, (x, y))
+
+    raw_png = output_dir / f"{window.session_id}-raw-{window.start_sequence}-{window.end_sequence}.png"
+    sheet.save(raw_png)
+    logger.info(
+        "debug raw window dumped raw_png=%s frames=%s window=%s-%s",
+        raw_png,
+        len(window.frames),
+        window.start_sequence,
+        window.end_sequence,
+    )
 
 
 @router.websocket("/ws/{session_id}")
@@ -308,6 +380,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             session_id,
             parameters={
                 "captureFps": settings.capture_fps,
+                "captureCountdownSeconds": settings.capture_countdown_seconds,
                 "windowFrames": settings.window_frames,
                 "inferenceStride": settings.inference_stride,
                 "mouthSize": settings.mouth_size,
@@ -357,6 +430,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         if window is not None:
             active.commit_stream()
             await send_json(_event("stream.committed", session_id))
+            try:
+                _dump_raw_debug_window(settings, window)
+            except Exception:
+                logger.exception("debug raw window dump failed session_id=%s", session_id)
             logger.info(
                 "mouth window ready session_id=%s window=%s-%s buffered=%s accepted=%s reused=%s",
                 session_id,
@@ -457,7 +534,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 continue
             last_mouth_image = crop.image.copy()
             reused_mouth_frames = 0
-            frame = MouthFrame(sequence=sequence, received_at_ms=received_at_ms, image=crop.image)
+            frame = MouthFrame(
+                sequence=sequence,
+                received_at_ms=received_at_ms,
+                image=crop.image,
+                debug_image=image.copy(),
+                debug_mouth_box=crop.box.model_dump(),
+                debug_landmarks=tuple(detection.landmarks),
+            )
             await publish_buffered_frame(
                 frame,
                 face_detected=True,

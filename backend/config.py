@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     model_backend: Literal["fake", "real"] = "fake"
     persistence_root: Path = Path("/workspace/persistent/silent-vision")
     capture_fps: int = Field(default=25, ge=1, le=60)
+    capture_countdown_seconds: int = Field(default=3, ge=0, le=10)
     window_frames: int = Field(default=75, ge=1)
     inference_stride: int = Field(default=25, ge=1)
     mouth_size: int = Field(default=96, ge=16)
