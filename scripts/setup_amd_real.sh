@@ -57,6 +57,52 @@ print("transformers imports:", AutoModel.__name__, AutoTokenizer.__name__)
 PY
 }
 
+download_if_missing_or_invalid_zip() {
+  local output_name="$1"
+  local url="$2"
+  local output_path="$SV_ROOT/downloads/$output_name"
+
+  if "$PYTHON_BIN" - "$output_path" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+path = Path(sys.argv[1])
+if not path.exists() or path.stat().st_size == 0:
+    raise SystemExit(1)
+try:
+    with zipfile.ZipFile(path) as zf:
+        bad = zf.testzip()
+except zipfile.BadZipFile:
+    raise SystemExit(1)
+if bad is not None:
+    print(f"invalid zip member: {bad}")
+    raise SystemExit(1)
+print(f"valid zip exists; skip download: {path}")
+PY
+  then
+    return
+  fi
+
+  echo "downloading missing or invalid zip: $output_path"
+  aria2c -c -x 16 -s 16 -k 1M --check-certificate=false \
+    -o "$output_name" \
+    "$url"
+
+  "$PYTHON_BIN" - "$output_path" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+path = Path(sys.argv[1])
+with zipfile.ZipFile(path) as zf:
+    bad = zf.testzip()
+if bad is not None:
+    raise SystemExit(f"downloaded zip is corrupt: {path}, bad member: {bad}")
+print(f"zip verified: {path}")
+PY
+}
+
 check_rocm_python
 
 apt-get update || true
@@ -92,17 +138,17 @@ test -f "$MPC_REPO/configs/LRS3_V_WER19.1.ini"
 test -f "$MPC_REPO/configs/CMLR_V_WER8.0.ini"
 
 cd "$SV_ROOT/downloads"
-aria2c -c -x 16 -s 16 -k 1M --check-certificate=false \
-  -o LRS3_V_WER19.1.zip \
+download_if_missing_or_invalid_zip \
+  LRS3_V_WER19.1.zip \
   'https://github.com/fangjixin/silent-vision/releases/download/models-v1/LRS3_V_WER19.1.zip'
-aria2c -c -x 16 -s 16 -k 1M --check-certificate=false \
-  -o CMLR_V_WER8.0.zip \
+download_if_missing_or_invalid_zip \
+  CMLR_V_WER8.0.zip \
   'https://github.com/fangjixin/silent-vision/releases/download/models-v1/CMLR_V_WER8.0.zip'
-aria2c -c -x 16 -s 16 -k 1M --check-certificate=false \
-  -o lm_en_subword.zip \
+download_if_missing_or_invalid_zip \
+  lm_en_subword.zip \
   'https://github.com/fangjixin/silent-vision/releases/download/models-v1/lm_en_subword.zip'
-aria2c -c -x 16 -s 16 -k 1M --check-certificate=false \
-  -o lm_zh.zip \
+download_if_missing_or_invalid_zip \
+  lm_zh.zip \
   'https://github.com/fangjixin/silent-vision/releases/download/models-v1/lm_zh.zip'
 
 "$PYTHON_BIN" - <<'PY'

@@ -46,6 +46,8 @@ def test_smoke_scripts_exist_and_are_executable():
     assert "check_transformers_stack" in setup.read_text()
     assert "MPC001_LM_WEIGHT" in setup.read_text()
     assert "decode.lm_weight" in setup.read_text()
+    assert "download_if_missing_or_invalid_zip" in setup.read_text()
+    assert "valid zip exists; skip download" in setup.read_text()
     assert "huggingface-hub must be <1.0" in start.read_text()
     assert "MPC001_ENGLISH_CONFIG" in start.read_text()
     assert "MPC001_CHINESE_CONFIG" in start.read_text()
