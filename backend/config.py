@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     model_confidence_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
     allowed_origins: str = "http://localhost:8000"
     log_transcripts: bool = False
+    log_level: str = "INFO"
+    debug_dump_windows: bool = False
+    debug_window_dir: Path | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     enable_model_health: bool = False

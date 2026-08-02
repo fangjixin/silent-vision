@@ -12,6 +12,8 @@ def test_settings_defaults_use_fake_backend_and_persistence_root():
     assert settings.inference_stride == 25
     assert settings.mouth_size == 96
     assert settings.capture_fps == 25
+    assert settings.log_level == "INFO"
+    assert settings.debug_dump_windows is False
 
 
 def test_settings_model_paths_are_derived_from_persistence_root():
@@ -34,6 +36,14 @@ def test_create_app_registers_health_routes():
     route_paths = {route.path for route in app.routes if hasattr(route, "path")}
     assert "/health/live" in route_paths
     assert "/health/ready" in route_paths
+
+
+def test_create_app_configures_application_info_logging():
+    import logging
+
+    create_app(Settings(log_level="INFO"))
+
+    assert logging.getLogger("lip.mpc001").isEnabledFor(logging.INFO)
 
 
 def test_ready_route_reports_fake_models_ready():

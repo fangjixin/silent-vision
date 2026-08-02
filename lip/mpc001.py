@@ -9,6 +9,7 @@ from time import perf_counter
 from typing import Literal
 
 import numpy as np
+from PIL import Image
 
 from backend.config import Settings
 from backend.schemas import LipReadingCandidate
@@ -128,6 +129,8 @@ class MPC001LipReader:
     def _write_window_frames(self, window: MouthWindow, frames_path: Path) -> None:
         frames = np.stack([frame.image for frame in window.frames]).astype("uint8", copy=False)
         np.save(frames_path, frames)
+        if self.settings.debug_dump_windows:
+            self._dump_debug_window(window, frames)
         logger.debug(
             "mpc001 frames written reader=%s path=%s shape=%s dtype=%s min=%s max=%s mean=%.2f",
             self.name,
@@ -137,6 +140,24 @@ class MPC001LipReader:
             int(frames.min()),
             int(frames.max()),
             float(frames.mean()),
+        )
+
+    def _dump_debug_window(self, window: MouthWindow, frames: np.ndarray) -> None:
+        target_dir = self.settings.debug_window_dir or (self.settings.persistence_root / "logs" / "mouth-windows")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"{window.session_id}-{self.name}-{window.start_sequence}-{window.end_sequence}"
+        npy_path = target_dir / f"{stem}.npy"
+        png_path = target_dir / f"{stem}.png"
+        np.save(npy_path, frames)
+        _write_contact_sheet(frames, png_path)
+        duration_ms = window.frames[-1].received_at_ms - window.frames[0].received_at_ms
+        logger.info(
+            "debug mouth window dumped reader=%s npy=%s png=%s frames=%s duration_ms=%s",
+            self.name,
+            npy_path,
+            png_path,
+            len(frames),
+            duration_ms,
         )
 
     def _run_inference(self, frames_path: Path) -> subprocess.CompletedProcess[str]:
@@ -199,3 +220,17 @@ def _tail(value: str | None, enabled: bool, limit: int = 1200) -> str:
     if not value:
         return ""
     return value[-limit:]
+
+
+def _write_contact_sheet(frames: np.ndarray, path: Path, columns: int = 15) -> None:
+    if frames.ndim != 3:
+        raise ValueError(f"expected [T,H,W] frames, got {frames.shape}")
+    rows = int(np.ceil(frames.shape[0] / columns))
+    height = frames.shape[1]
+    width = frames.shape[2]
+    sheet = np.zeros((rows * height, columns * width), dtype=np.uint8)
+    for index, frame in enumerate(frames):
+        row = index // columns
+        column = index % columns
+        sheet[row * height : (row + 1) * height, column * width : (column + 1) * width] = frame
+    Image.fromarray(sheet, mode="L").save(path)

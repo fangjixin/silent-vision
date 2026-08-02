@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import timedelta
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from vision.face import create_face_detector
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
+    configure_logging(app_settings)
     app = FastAPI(title="Silent Vision")
     app.state.settings = app_settings
     app.state.models = {"backend": app_settings.model_backend, "ready": False}
@@ -61,6 +63,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ready", "models": app.state.models}
 
     return app
+
+
+def configure_logging(settings: Settings) -> None:
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    logging.getLogger().setLevel(level)
+    for logger_name in ("api", "backend", "lip", "llm", "vision", "agent", "session"):
+        logging.getLogger(logger_name).setLevel(level)
 
 
 app = create_app()
