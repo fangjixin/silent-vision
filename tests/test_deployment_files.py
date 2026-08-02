@@ -174,6 +174,17 @@ def test_websocket_has_calibration_upload_path():
     assert "profileId" in source
 
 
+def test_frontend_has_prototype_calibration_ui():
+    html = Path("frontend/index.html").read_text()
+    js = Path("frontend/websocket.js").read_text()
+
+    assert "calibration-intent" in html
+    assert "calibration-phrase" in html
+    assert "Save Sample" in html
+    assert "silentVisionProfileId" in js
+    assert "calibration.start" in js
+
+
 def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows():
     websocket_py = Path("api/websocket.py").read_text()
     manager_py = Path("session/manager.py").read_text()

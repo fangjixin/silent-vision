@@ -32,6 +32,34 @@
       <pre id="candidateOutput"></pre>
       <h2>Result</h2>
       <pre id="resultOutput"></pre>
+      <section class="calibration" aria-label="Prototype calibration">
+        <h2>Calibration</h2>
+        <label>
+          Intent
+          <select id="calibration-intent">
+            <option value="LIGHT_ON">LIGHT_ON</option>
+            <option value="LIGHT_OFF">LIGHT_OFF</option>
+            <option value="OPEN_DOOR">OPEN_DOOR</option>
+            <option value="CHAT_OTHER">CHAT_OTHER</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+          </select>
+        </label>
+        <label>
+          Language
+          <select id="calibration-language">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </label>
+        <label>
+          Phrase
+          <input id="calibration-phrase" placeholder="e.g. 你好，请帮我打开灯">
+        </label>
+        <button id="save-sample" type="button">Save Sample</button>
+        <p id="profile-id"></p>
+        <pre id="calibration-result"></pre>
+      </section>
     </section>
   </main>
   <script type="module" src="/static/websocket.js"></script>

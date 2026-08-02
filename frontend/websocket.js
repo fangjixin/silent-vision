@@ -1,9 +1,12 @@
 import { CameraStreamer, ClipRecorder } from "./camera.js";
 
+const PROFILE_STORAGE_KEY = "silentVisionProfileId";
+
 const state = {
   ws: null,
   sessionId: null,
   camera: null,
+  profileId: getOrCreateProfileId(),
   parameters: {
     captureFps: 25,
     windowFrames: 75,
@@ -16,6 +19,14 @@ const state = {
   connectionGeneration: 0,
   phase: "idle",
 };
+
+function getOrCreateProfileId() {
+  const existing = localStorage.getItem(PROFILE_STORAGE_KEY);
+  if (existing) return existing;
+  const created = crypto.randomUUID ? crypto.randomUUID() : `profile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem(PROFILE_STORAGE_KEY, created);
+  return created;
+}
 
 function setText(id, value) {
   document.getElementById(id).textContent = value;
@@ -103,6 +114,23 @@ function handleEvent(event) {
     setText("semanticStatus", event.accepted ? "accepted" : `rejected: ${event.reason}`);
     setText("candidateOutput", JSON.stringify(event, null, 2));
   }
+  if (event.type === "calibration.started") {
+    setText("bufferStatus", "recording calibration");
+    setText("calibration-result", JSON.stringify(event, null, 2));
+  }
+  if (event.type === "calibration.saved") {
+    setText("bufferStatus", `${event.frames} frames saved`);
+    setText("lipStatus", "sample saved");
+    setText("semanticStatus", "calibrated");
+    setText("agentStatus", "done");
+    setText("calibration-result", JSON.stringify(event, null, 2));
+    setDoneUiState();
+  }
+  if (event.type === "calibration.error") {
+    setText("visionStatus", `calibration failed: ${event.message}`);
+    setText("calibration-result", JSON.stringify(event, null, 2));
+    setStoppedUiState();
+  }
   if (event.type === "semantic.result") setText("semanticStatus", `${event.language}: ${event.text}`);
   if (event.type === "inference.started") setText("lipStatus", "running");
   if (event.type === "agent.result") {
@@ -157,6 +185,7 @@ function setStoppedUiState() {
   setText("resultOutput", "");
   document.getElementById("startButton").disabled = false;
   document.getElementById("stopButton").disabled = true;
+  document.getElementById("save-sample").disabled = false;
 }
 
 function setAnalyzingUiState() {
@@ -170,6 +199,7 @@ function setAnalyzingUiState() {
   setText("agentStatus", "waiting");
   document.getElementById("startButton").disabled = true;
   document.getElementById("stopButton").disabled = false;
+  document.getElementById("save-sample").disabled = true;
 }
 
 async function recordAndSendClip(connectionGeneration) {
@@ -180,7 +210,7 @@ async function recordAndSendClip(connectionGeneration) {
   await state.camera.startPreview();
   await runCaptureCountdown(connectionGeneration);
   if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
-  state.ws.send(JSON.stringify({ type: "clip.start" }));
+  state.ws.send(JSON.stringify({ type: "clip.start", profileId: state.profileId }));
   state.phase = "recording";
   state.streaming = true;
   setText("cameraStatus", "recording");
@@ -192,6 +222,40 @@ async function recordAndSendClip(connectionGeneration) {
   state.streaming = false;
   state.ws.send(clipBlob);
   setAnalyzingUiState();
+}
+
+async function recordAndSendCalibrationClip(connectionGeneration) {
+  const intent = document.getElementById("calibration-intent").value;
+  const language = document.getElementById("calibration-language").value;
+  const phrase = document.getElementById("calibration-phrase").value.trim();
+  state.camera = new ClipRecorder({
+    video: document.getElementById("cameraPreview"),
+    fps: state.parameters.captureFps || 25,
+  });
+  await state.camera.startPreview();
+  await runCaptureCountdown(connectionGeneration);
+  if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
+  state.ws.send(JSON.stringify({
+    type: "calibration.start",
+    profileId: state.profileId,
+    intent,
+    language,
+    phrase,
+    scope: "personal",
+  }));
+  state.phase = "recording";
+  state.streaming = true;
+  setText("cameraStatus", "recording sample");
+  setText("bufferStatus", "recording calibration");
+  const durationMs = Math.round((state.parameters.commandClipMaxSeconds || 5) * 1000);
+  const clipBlob = await state.camera.recordClip({ durationMs });
+  if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
+  stopCamera();
+  state.streaming = false;
+  state.ws.send(clipBlob);
+  setAnalyzingUiState();
+  setText("lipStatus", "saving sample");
+  setText("semanticStatus", "waiting");
 }
 
 async function streamFrames(connectionGeneration) {
@@ -223,6 +287,7 @@ function setDoneUiState() {
   setText("agentStatus", "done");
   document.getElementById("startButton").disabled = false;
   document.getElementById("stopButton").disabled = true;
+  document.getElementById("save-sample").disabled = false;
 }
 
 function autoSubmitWhenBufferFull(event) {
@@ -282,7 +347,29 @@ document.getElementById("startButton").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("save-sample").addEventListener("click", async () => {
+  cleanupCurrentStream();
+  const connectionGeneration = state.connectionGeneration;
+  resetUiForNewStream();
+  document.getElementById("startButton").disabled = true;
+  document.getElementById("stopButton").disabled = false;
+  document.getElementById("save-sample").disabled = true;
+  try {
+    await connect(connectionGeneration);
+    if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
+    await recordAndSendCalibrationClip(connectionGeneration);
+  } catch (error) {
+    if (connectionGeneration !== state.connectionGeneration) return;
+    console.error("Silent Vision calibration failed", error);
+    cleanupCurrentStream();
+    setStoppedUiState();
+    setText("visionStatus", `calibration failed: ${error.message}`);
+  }
+});
+
 document.getElementById("stopButton").addEventListener("click", () => {
   cleanupCurrentStream();
   setStoppedUiState();
 });
+
+document.getElementById("profile-id").textContent = `Profile: ${state.profileId}`;
