@@ -55,31 +55,24 @@ Use the browser Calibration panel first:
 4. Record 5-10 samples per command.
 5. Press `Start` to test recognition.
 
-Samples are saved under anonymous browser profiles:
+Samples are saved in the shared global prototype profile:
 
 ```text
-/workspace/persistent/silent-vision/profiles/<profileId>/<INTENT>/<sampleId>/
+/workspace/persistent/silent-vision/profiles/global/<INTENT>/<sampleId>/
   original.webm
   mouth_roi.npy
   embedding.npy
   metadata.json
 ```
 
-`Personal Profile` means the current browser's anonymous `profileId`. It is
-used first when matching commands. `Global Profile` means server-provided
-defaults shared by all browsers:
+The browser always uses `profileId=global`. This avoids losing access to
+samples when the public tunnel domain changes, the browser changes, or the
+server restarts.
 
-```text
-/workspace/persistent/silent-vision/profiles/global/
-```
-
-To promote personal samples into global defaults:
+To inspect saved samples:
 
 ```bash
 /opt/venv/bin/python scripts/inspect_prototypes.py --root /workspace/persistent/silent-vision
-/opt/venv/bin/python scripts/build_global_prototypes.py \
-  --root /workspace/persistent/silent-vision \
-  --from-profile <profileId>
 ```
 
 ## Torch classifier training
@@ -108,8 +101,7 @@ bash scripts/amd_real_oneclick.sh
 ```text
 /workspace/persistent/silent-vision/
 ├── profiles/
-│   ├── global/
-│   └── <profileId>/
+│   └── global/
 ├── models/
 │   └── command_classifier.pt      # optional torch backend
 ├── cache/

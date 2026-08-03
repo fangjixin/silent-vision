@@ -1,12 +1,12 @@
 import { ClipRecorder } from "./camera.js";
 
-const PROFILE_STORAGE_KEY = "silentVisionProfileId";
+const GLOBAL_PROFILE_ID = "global";
 
 const state = {
   ws: null,
   sessionId: null,
   camera: null,
-  profileId: getOrCreateProfileId(),
+  profileId: GLOBAL_PROFILE_ID,
   parameters: {
     captureFps: 25,
     captureCountdownSeconds: 3,
@@ -17,14 +17,6 @@ const state = {
   connectionGeneration: 0,
   phase: "idle",
 };
-
-function getOrCreateProfileId() {
-  const existing = localStorage.getItem(PROFILE_STORAGE_KEY);
-  if (existing) return existing;
-  const created = crypto.randomUUID ? crypto.randomUUID() : `profile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  localStorage.setItem(PROFILE_STORAGE_KEY, created);
-  return created;
-}
 
 function setText(id, value) {
   document.getElementById(id).textContent = value;
@@ -194,7 +186,7 @@ async function recordAndSendClip(connectionGeneration) {
   await state.camera.startPreview();
   await runCaptureCountdown(connectionGeneration);
   if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
-  state.ws.send(JSON.stringify({ type: "clip.start", profileId: state.profileId }));
+  state.ws.send(JSON.stringify({ type: "clip.start", profileId: GLOBAL_PROFILE_ID }));
   state.phase = "recording";
   state.streaming = true;
   setText("cameraStatus", "recording");
@@ -221,11 +213,11 @@ async function recordAndSendCalibrationClip(connectionGeneration) {
   if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
   state.ws.send(JSON.stringify({
     type: "calibration.start",
-    profileId: state.profileId,
+    profileId: GLOBAL_PROFILE_ID,
     intent,
     language,
     phrase,
-    scope: "personal",
+    scope: "global",
   }));
   state.phase = "recording";
   state.streaming = true;

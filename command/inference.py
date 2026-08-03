@@ -167,11 +167,8 @@ class PrototypeCommandClassifierBackend:
     def predict(self, mouth_frames: np.ndarray, metadata: dict[str, object]) -> CommandDecision:
         started = perf_counter()
         embedding = extract_roi_embedding(mouth_frames, feature_dim=self.settings.prototype_feature_dim)
-        profile_id = _metadata_string(metadata, "profileId")
-        scopes: list[tuple[str, str | None]] = []
-        if self.settings.prototype_prefer_personal and profile_id:
-            scopes.append(("personal", profile_id))
-        scopes.append(("global", "global"))
+        profile_id = "global"
+        scopes: list[tuple[str, str | None]] = [("global", "global")]
 
         last_match = None
         last_scope = "none"
@@ -251,11 +248,6 @@ def _simple_visual_features(mouth_frames: np.ndarray, feature_dim: int) -> np.nd
     base = np.concatenate([mean, std, diff], axis=1)
     repeats = int(np.ceil(feature_dim / base.shape[1]))
     return np.tile(base, (1, repeats))[:, :feature_dim]
-
-
-def _metadata_string(metadata: dict[str, object], key: str) -> str | None:
-    value = metadata.get(key)
-    return _clean_metadata_string(value)
 
 
 def _clean_metadata_string(value: object) -> str | None:

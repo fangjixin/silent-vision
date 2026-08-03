@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     prototype_feature_dim: int = Field(default=128, ge=1)
     prototype_confidence_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
     prototype_top1_margin: float = Field(default=0.12, ge=0.0, le=1.0)
-    prototype_prefer_personal: bool = True
-    allow_global_profile_write: bool = False
+    prototype_prefer_personal: bool = False
+    allow_global_profile_write: bool = True
     mouth_size: int = Field(default=96, ge=16)
     model_confidence_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
     allowed_origins: str = "http://localhost:8000"

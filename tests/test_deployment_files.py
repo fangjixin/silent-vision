@@ -166,7 +166,11 @@ def test_frontend_has_prototype_calibration_ui():
     assert "calibration-intent" in html
     assert "calibration-phrase" in html
     assert "Save Sample" in html
-    assert "silentVisionProfileId" in js
+    assert "GLOBAL_PROFILE_ID = \"global\"" in js
+    assert "silentVisionProfileId" not in js
+    assert "localStorage" not in js
+    assert "profileId: GLOBAL_PROFILE_ID" in js
+    assert "scope: \"global\"" in js
     assert "calibration.start" in js
 
 
@@ -179,7 +183,8 @@ def test_prototype_scripts_and_startup_defaults_exist():
 
     assert "COMMAND_BACKEND=prototype" in oneclick
     assert "profiles/global" in readme
-    assert "Personal Profile" in readme
+    assert "profileId=global" in readme
+    assert "Personal Profile" not in readme
 
 
 def test_backend_clip_cancel_and_cleanup_release_active_session():

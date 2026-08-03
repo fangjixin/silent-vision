@@ -14,6 +14,8 @@ def test_settings_defaults_use_fake_backend_and_persistence_root():
     assert settings.command_clip_fps == 25
     assert settings.command_confidence_threshold == 0.85
     assert settings.command_top1_margin == 0.20
+    assert settings.prototype_prefer_personal is False
+    assert settings.allow_global_profile_write is True
     assert settings.log_level == "INFO"
     assert settings.debug_dump_windows is False
 

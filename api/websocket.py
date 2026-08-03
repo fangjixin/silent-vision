@@ -11,7 +11,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from backend.schemas import CalibrationRequest, CalibrationSaved, ErrorCode, ErrorEvent, utc_now
 from command.inference import save_command_debug
 from command.labels import CommandIntent
-from command.prototype import save_prototype_sample, sanitize_profile_id
+from command.prototype import save_prototype_sample
 from session.manager import SessionError, SessionReplacedError
 from video.clip import decode_video_clip, save_original_video
 from video.mouth_roi import extract_mouth_roi_clip, write_aligned_face_video, write_mouth_roi_video
@@ -198,9 +198,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
 
     async def process_calibration_clip(data: bytes, calibration: dict[str, Any]) -> None:
         debug_dir = settings.debug_window_dir or settings.persistence_root / "logs" / "command-runs"
-        profile_id = str(calibration["profileId"])
-        scope = str(calibration["scope"])
-        target_profile = "global" if scope == "global" else sanitize_profile_id(profile_id)
+        profile_id = "global"
+        scope = "global"
+        target_profile = "global"
         original_video = None
         aligned_face_video = None
         mouth_roi_video = None
@@ -347,11 +347,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     await cancel_active_inference("clip started")
                     active.reset_stream()
                     pending_calibration = None
-                    pending_clip_metadata = {
-                        key: value
-                        for key, value in command_payload.items()
-                        if key in {"profileId"} and isinstance(value, str)
-                    }
+                    pending_clip_metadata = {"profileId": "global"}
                     logger.info("clip started session_id=%s", session_id)
                     await send_json(_event("clip.started", session_id))
                 elif command_type == "clip.cancel":
@@ -364,11 +360,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 elif command_type == "calibration.start":
                     try:
                         request = CalibrationRequest.model_validate(command_payload)
-                        if request.scope == "global" and not settings.allow_global_profile_write:
+                        if not settings.allow_global_profile_write:
                             raise ValueError("global profile writes are disabled")
                         if request.intent not in {intent.value for intent in CommandIntent}:
                             raise ValueError("invalid calibration intent")
-                        pending_calibration = request.model_dump()
+                        pending_calibration = request.model_dump() | {"profileId": "global", "scope": "global"}
                         await cancel_active_inference("calibration started")
                         active.reset_stream()
                         logger.info(
