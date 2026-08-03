@@ -1,44 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export MODEL_BACKEND=real
-export PERSISTENCE_ROOT=/workspace/persistent/silent-vision
-python - <<'PY'
-from pathlib import Path
 
-root = Path("/workspace/persistent/silent-vision")
-required = [
-    Path("scripts/mpc001_mouth_infer.py"),
-    root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages" / "infer.py",
-    root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages" / "pipelines" / "model.py",
-    root
-    / "repos"
-    / "Visual_Speech_Recognition_for_Multiple_Languages"
-    / "pipelines"
-    / "data"
-    / "transforms.py",
-    root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages" / "configs" / "LRS3_V_WER19.1.ini",
-    root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages" / "configs" / "CMLR_V_WER8.0.ini",
-    root
-    / "repos"
-    / "Visual_Speech_Recognition_for_Multiple_Languages"
-    / "benchmarks"
-    / "LRS3"
-    / "models"
-    / "LRS3_V_WER19.1"
-    / "model.pth",
-    root
-    / "repos"
-    / "Visual_Speech_Recognition_for_Multiple_Languages"
-    / "benchmarks"
-    / "CMLR"
-    / "models"
-    / "CMLR_V_WER8.0"
-    / "model.pth",
-    root / "models" / "minicpm-o-4_5",
-]
-missing = [str(path) for path in required if not path.exists()]
-if missing:
-    raise SystemExit("missing required model paths: " + ", ".join(missing))
+export COMMAND_BACKEND="${COMMAND_BACKEND:-prototype}"
+export PERSISTENCE_ROOT="${PERSISTENCE_ROOT:-/workspace/persistent/silent-vision}"
+export PYTHON_BIN="${PYTHON_BIN:-/opt/venv/bin/python}"
+
+"$PYTHON_BIN" - <<'PY'
+import os
+from pathlib import Path
+import torch
+
+print("torch:", torch.__version__)
+print("torch hip:", torch.version.hip)
+print("cuda available:", torch.cuda.is_available())
+if torch.version.hip is None or not torch.cuda.is_available():
+    raise SystemExit("ROCm PyTorch is not available")
+
+backend = os.environ.get("COMMAND_BACKEND", "prototype")
+root = Path(os.environ["PERSISTENCE_ROOT"])
+if backend == "prototype":
+    (root / "profiles" / "global").mkdir(parents=True, exist_ok=True)
+elif backend == "torch":
+    checkpoint = os.environ.get("COMMAND_CLASSIFIER_CHECKPOINT")
+    if not checkpoint or not Path(checkpoint).exists():
+        raise SystemExit("COMMAND_CLASSIFIER_CHECKPOINT is required and must exist when COMMAND_BACKEND=torch")
+else:
+    raise SystemExit(f"unsupported COMMAND_BACKEND: {backend}")
+print("command backend:", backend)
 PY
-pytest tests/test_rocm_models.py -m "rocm and model_integration" -v
-docker compose -f docker/docker-compose.yml up --build
+
+"$PYTHON_BIN" -m pytest \
+  tests/test_deployment_files.py \
+  tests/test_prototype_recognition.py \
+  tests/test_command_classifier.py \
+  -q

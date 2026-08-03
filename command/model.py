@@ -42,6 +42,7 @@ def build_command_model(
     num_heads: int = 4,
     dropout: float = 0.1,
 ):
+    import torch
     from torch import nn
 
     class _ConformerBlock(nn.Module):

@@ -1,24 +1,8 @@
 import numpy as np
-import pytest
 
 from backend.config import Settings
-from backend.schemas import ErrorCode
-from tests.conftest import make_jpeg
-from vision.face import FakeFaceDetector, FrameDecodeError, create_face_detector, decode_jpeg_frame
+from vision.face import FakeFaceDetector, create_face_detector
 from vision.mouth import crop_mouth
-
-
-def test_decode_jpeg_frame_returns_rgb_image():
-    image = decode_jpeg_frame(make_jpeg(width=320, height=240), Settings())
-    assert image.shape == (240, 320, 3)
-    assert image.dtype == np.uint8
-
-
-def test_decode_rejects_oversize_payload():
-    settings = Settings(max_jpeg_bytes=1024)
-    with pytest.raises(FrameDecodeError) as exc_info:
-        decode_jpeg_frame(make_jpeg(width=1024, height=1024), settings)
-    assert exc_info.value.code == ErrorCode.FRAME_TOO_LARGE
 
 
 def test_crop_mouth_returns_normalized_box_and_96_image():
@@ -53,5 +37,5 @@ def test_fake_face_detector_returns_one_face():
 
 
 def test_create_face_detector_uses_fake_backend_by_default():
-    detector = create_face_detector(Settings(model_backend="fake"))
+    detector = create_face_detector(Settings(command_backend="fake"))
     assert isinstance(detector, FakeFaceDetector)

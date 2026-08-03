@@ -17,14 +17,9 @@ class ErrorCode(str, Enum):
     INVALID_SESSION = "INVALID_SESSION"
     SESSION_REPLACED = "SESSION_REPLACED"
     SERVER_BUSY = "SERVER_BUSY"
-    FRAME_TOO_LARGE = "FRAME_TOO_LARGE"
-    INVALID_JPEG = "INVALID_JPEG"
-    FRAME_TOO_LARGE_DIMENSIONS = "FRAME_TOO_LARGE_DIMENSIONS"
     FACE_NOT_FOUND = "FACE_NOT_FOUND"
     MULTIPLE_FACES = "MULTIPLE_FACES"
     INVALID_MOUTH_BOX = "INVALID_MOUTH_BOX"
-    LIP_MODELS_FAILED = "LIP_MODELS_FAILED"
-    MINICPM_FAILED = "MINICPM_FAILED"
     GPU_OUT_OF_MEMORY = "GPU_OUT_OF_MEMORY"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -40,22 +35,6 @@ class MouthBox(BaseModel):
     y: float = Field(ge=0.0, le=1.0)
     width: float = Field(gt=0.0, le=1.0)
     height: float = Field(gt=0.0, le=1.0)
-
-
-class LipReadingCandidate(BaseModel):
-    model: Literal["avhubert", "cmlr"]
-    language: Literal["zh", "en"]
-    text: str
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-    rawScore: float | None = None
-    latencyMs: int = Field(ge=0)
-
-
-class SemanticResult(BaseModel):
-    language: Language
-    text: str
-    confidence: float = Field(ge=0.0, le=1.0)
-    reason: str
 
 
 class CommandDecision(BaseModel):

@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 from backend.config import Settings
-from lip.base import MouthFrame
+from video.types import MouthFrame
 from vision.mouth import crop_mouth
 
 

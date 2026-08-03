@@ -31,7 +31,7 @@ def test_smoke_scripts_exist_and_are_executable():
     assert setup.read_text().startswith("#!/usr/bin/env bash")
     assert start.read_text().startswith("#!/usr/bin/env bash")
     assert oneclick.read_text().startswith("#!/usr/bin/env bash")
-    assert "Visual_Speech_Recognition_for_Multiple_Languages" in rocm.read_text()
+    assert "Visual_Speech_Recognition_for_Multiple_Languages" not in rocm.read_text()
     assert "models/avhubert/model.pt" not in rocm.read_text()
     assert "/opt/venv/bin/python" in setup.read_text()
     assert "/opt/venv/bin/python" in start.read_text()
@@ -40,17 +40,11 @@ def test_smoke_scripts_exist_and_are_executable():
     assert "scripts/setup_amd_real.sh" in oneclick.read_text()
     assert "scripts/start_real_rocm.sh" in oneclick.read_text()
     assert "rc-tunnel" not in oneclick.read_text()
-    assert "huggingface-hub>=0.30.0,<1.0.0" in setup.read_text()
-    assert "pip install --upgrade huggingface_hub" not in setup.read_text()
-    assert "--force-reinstall --no-deps" in setup.read_text()
-    assert "check_transformers_stack" in setup.read_text()
-    assert "MPC001_LM_WEIGHT" in setup.read_text()
-    assert "decode.lm_weight" in setup.read_text()
-    assert "download_if_missing_or_invalid_zip" in setup.read_text()
-    assert "valid zip exists; skip download" in setup.read_text()
-    assert "huggingface-hub must be <1.0" in start.read_text()
-    assert "MPC001_ENGLISH_CONFIG" in start.read_text()
-    assert "MPC001_CHINESE_CONFIG" in start.read_text()
+    for removed in ["Visual_Speech_Recognition_for_Multiple_Languages", "models/minicpm-o-4_5", "HF_HOME", "MPC001_REPO"]:
+        assert removed not in setup.read_text()
+        assert removed not in start.read_text()
+    assert "check_no_removed_dependencies" in setup.read_text()
+    assert "COMMAND_CLASSIFIER_CHECKPOINT" in start.read_text()
 
 
 def test_frontend_stream_lifecycle_cleans_up_between_starts():
@@ -68,38 +62,28 @@ def test_frontend_stream_lifecycle_cleans_up_between_starts():
     assert "connectionGeneration" in websocket_js
     assert "socketGeneration !== state.connectionGeneration" in websocket_js
     assert "state.ws.close(1000, \"client stopped stream\");" in websocket_js
-    assert "state.ws.bufferedAmount > 2_000_000" in websocket_js
     assert "state.streaming = false;" in websocket_js
-    assert "mouth reused" in websocket_js
 
 
-def test_frontend_one_shot_capture_auto_submits_full_buffer_without_cancelling_inference():
+def test_frontend_one_shot_capture_sends_single_binary_clip():
     websocket_js = Path("frontend/websocket.js").read_text()
     camera_js = Path("frontend/camera.js").read_text()
     assert "phase: \"idle\"" in websocket_js
-    assert "autoSubmitWhenBufferFull(event);" in websocket_js
-    assert "function autoSubmitWhenBufferFull(event)" in websocket_js
     assert "runCaptureCountdown(connectionGeneration);" in websocket_js
     assert "captureCountdownSeconds" in websocket_js
     assert "await state.camera.startPreview();" in websocket_js
-    assert "state.camera.startCapture();" in websocket_js
     assert "async startPreview()" in camera_js
-    assert "startCapture()" in camera_js
+    assert "MediaRecorder" in camera_js
     assert "setAnalyzingUiState();" in websocket_js
     assert "setDoneUiState();" in websocket_js
     assert "cameraStatus\", \"recorded\"" in websocket_js
-    assert "semanticStatus\", \"running\"" in websocket_js
     assert "agentStatus\", \"done\"" in websocket_js
-    assert "if (state.phase !== \"recording\") return;" in websocket_js
-    assert "event.bufferedFrames < event.requiredFrames" in websocket_js
     assert "stopCamera();" in websocket_js
     assert "state.streaming = false;" in websocket_js
+    assert "state.ws.send(clipBlob);" in websocket_js
     assert "state.ws.send(JSON.stringify({ type: \"stream.stop\" }));" in websocket_js
-    assert "state.ws.send(JSON.stringify({ type: \"stream.commit\" }));" in websocket_js
-    assert "function autoSubmitWhenBufferFull" in websocket_js
-    auto_submit_block = websocket_js.split("function autoSubmitWhenBufferFull", 1)[1].split("function ", 1)[0]
-    assert "stream.stop" not in auto_submit_block
-    assert "stream.commit" in auto_submit_block
+    assert "function autoSubmitWhenBufferFull" not in websocket_js
+    assert "windowFrames" not in websocket_js
 
 
 def test_frontend_records_utterance_level_binary_video_clips():
@@ -112,6 +96,7 @@ def test_frontend_records_utterance_level_binary_video_clips():
     assert "state.ws.send(clipBlob);" in websocket_js
     assert "readAsDataURL" not in camera_js
     assert "base64" not in camera_js.lower()
+    assert "image/jpeg" not in camera_js
 
 
 def test_backend_uses_pyav_25fps_clip_preprocessing_and_debug_artifacts():
@@ -159,8 +144,8 @@ def test_rejected_commands_do_not_call_llm_or_execute_actions():
     websocket_py = Path("api/websocket.py").read_text()
     agent_py = Path("agent/agent.py").read_text()
     assert "command_decision.accepted" in websocket_py
-    command_clip_block = websocket_py.split("async def process_command_clip", 1)[1].split("async def run_inference_loop", 1)[0]
-    assert "semantic_interpreter.interpret" not in command_clip_block
+    assert "semantic_interpreter" not in websocket_py
+    assert "MiniCPM" not in websocket_py
     assert "decide_command" in agent_py
     assert "action=\"reject\"" in agent_py
 
@@ -197,49 +182,34 @@ def test_prototype_scripts_and_startup_defaults_exist():
     assert "Personal Profile" in readme
 
 
-def test_backend_stream_stop_cancels_running_inference_and_ignores_stale_windows():
+def test_backend_clip_cancel_and_cleanup_release_active_session():
     websocket_py = Path("api/websocket.py").read_text()
     manager_py = Path("session/manager.py").read_text()
-    inference_py = Path("lip/inference.py").read_text()
-    mpc001_py = Path("lip/mpc001.py").read_text()
     assert "def stop_stream(self) -> None:" in manager_py
     assert "stream_generation" in manager_py
     assert "inference_cancel_event" in manager_py
     assert "active.stop_stream()" in websocket_py
     assert "active.commit_stream()" in websocket_py
     assert "active.accepting_frames" in websocket_py
-    assert "stream.committed" in websocket_py
     assert "cancel_active_inference(" in websocket_py
     assert "cancel_active_inference(\"websocket cleanup\")" in websocket_py
     assert "active.inference_cancel_event.set()" in websocket_py
-    assert "stream_generation" in websocket_py
-    assert "is_live_stream" in websocket_py
-    assert "cancel_event" in inference_py
-    assert "subprocess.Popen" in mpc001_py
-    assert "start_new_session=True" in mpc001_py
-    assert "os.killpg" in mpc001_py
-    assert "subprocess.run" not in mpc001_py
-    assert "mpc001 subprocess cancelled" in mpc001_py
+    assert "clip.cancel" in websocket_py
+    assert "run_inference_loop" not in websocket_py
+    assert "add_mouth_frame" not in manager_py
 
 
-def test_backend_debug_dump_writes_raw_frame_overlay_contact_sheet():
+def test_backend_debug_dump_writes_clip_artifacts():
     websocket_py = Path("api/websocket.py").read_text()
-    base_py = Path("lip/base.py").read_text()
-    assert "debug_image" in base_py
-    assert "debug_mouth_box" in base_py
-    assert "debug_landmarks" in base_py
     assert "captureCountdownSeconds" in websocket_py
-    assert "_dump_raw_debug_window" in websocket_py
-    assert "raw_png" in websocket_py
-    assert "ImageDraw.Draw" in websocket_py
-    assert "debug_image=image.copy()" in websocket_py
+    assert "save_original_video" in websocket_py
+    assert "mouth_roi_npy" in websocket_py
+    assert "aligned_face_video" in websocket_py
+    assert "mouth_roi_video" in websocket_py
 
 
-def test_real_mode_suppresses_noisy_third_party_warnings():
-    minicpm = Path("llm/minicpm.py").read_text()
+def test_real_mode_suppresses_noisy_mediapipe_warnings():
     face = Path("vision/face.py").read_text()
-    assert "image_processor_class argument is deprecated" in minicpm
-    assert "Using a slow image processor" in minicpm
     assert "SymbolDatabase.GetPrototype" in face
 
 
@@ -248,14 +218,11 @@ def test_requirements_use_current_compatible_real_mode_versions():
     assert "fastapi>=0.141.1,<1.0.0" in requirements
     assert "uvicorn[standard]>=0.52.0,<1.0.0" in requirements
     assert "pydantic>=2.13.4,<3.0.0" in requirements
-    assert "transformers==4.51.0" in requirements
-    assert "huggingface-hub>=0.30.0,<1.0.0" in requirements
     assert "numpy>=1.26.4,<2.0.0" in requirements
     assert "opencv-python-headless>=4.10.0,<4.11.0" in requirements
     assert "mediapipe==0.10.14" in requirements
-    assert "minicpmo-utils==1.0.6" in requirements
     assert "Pillow==10.4.0" in requirements
     assert "Pillow>=12.0.0" not in requirements
-    assert "librosa==0.9.0" in requirements
-    assert "soundfile==0.12.1" in requirements
+    for removed in ["transformers", "huggingface-hub", "accelerate", "safetensors", "librosa", "soundfile", "minicpmo-utils"]:
+        assert removed not in requirements
     assert "torch" not in requirements

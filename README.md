@@ -1,25 +1,51 @@
 # Silent Vision
 
-Silent Vision now supports a closed-set visual command path for short
-utterance clips. The browser records a 2-5 second `video/webm` clip, uploads
-it as binary WebSocket data, and the backend classifies business intents such
-as `LIGHT_ON`, `LIGHT_OFF`, `OPEN_DOOR`, `CHAT_OTHER`, and `UNKNOWN`.
+Silent Vision is now a closed-set visual command recognition system. The
+browser records one 2-5 second `video/webm` utterance clip, uploads it as
+binary WebSocket data, and the backend classifies business intents such as
+`LIGHT_ON`, `LIGHT_OFF`, `OPEN_DOOR`, `CHAT_OTHER`, and `UNKNOWN`.
 
-Rejected commands do not call MiniCPM and do not execute actions.
+It no longer performs open-vocabulary bilingual transcription in the runtime
+path. Rejected commands are not executed by the agent.
 
-AMD ROCm command-mode startup:
+## AMD ROCm startup
 
 ```bash
 cd /workspace/template-repos/template-907/repo
-export RECOGNITION_MODE=command
 export COMMAND_BACKEND=prototype
 export DEBUG_DUMP_WINDOWS=true
 bash scripts/amd_real_oneclick.sh
 ```
 
-Prototype mode is the recommended first real workflow. It does not try to
-transcribe arbitrary Chinese. It compares the current mouth ROI clip against
-saved command examples.
+The tunnel is still handled in a second AMD terminal:
+
+```bash
+$HOME/.local/bin/rc-tunnel expose --port 8000
+```
+
+Open the emitted `https://rc-....radeon.firstdg.ai` URL from the local browser
+that has the camera.
+
+## Browser workflow
+
+Normal command recognition:
+
+1. Click `Start`.
+2. The page previews the camera and counts down.
+3. Speak one complete 2-5 second command.
+4. The browser auto-stops recording and uploads the clip.
+5. The backend decodes/resamples to 25 FPS, extracts a stable mouth ROI clip,
+   classifies the command, and returns `command.result` plus `agent.result`.
+
+`Cancel` only cancels the current recording/connection. You do not need to wait
+for the old frame-buffer counter, and you should not manually press stop after
+speaking.
+
+## Prototype calibration
+
+Prototype mode is the recommended first real workflow. It compares the current
+mouth ROI clip against saved command examples instead of trying to transcribe
+arbitrary Chinese or English.
 
 Use the browser Calibration panel first:
 
@@ -47,7 +73,7 @@ defaults shared by all browsers:
 /workspace/persistent/silent-vision/profiles/global/
 ```
 
-To promote your personal samples into the global defaults:
+To promote personal samples into global defaults:
 
 ```bash
 /opt/venv/bin/python scripts/inspect_prototypes.py --root /workspace/persistent/silent-vision
@@ -56,16 +82,20 @@ To promote your personal samples into the global defaults:
   --from-profile <profileId>
 ```
 
-Classifier training is still available after enough data exists:
+## Torch classifier training
+
+After enough command data exists, train a classifier:
 
 ```bash
-/opt/venv/bin/python scripts/record_command_manifest.py --output /workspace/persistent/silent-vision/commands/manifest.jsonl
+/opt/venv/bin/python scripts/record_command_manifest.py \
+  --output /workspace/persistent/silent-vision/commands/manifest.jsonl
+
 /opt/venv/bin/python scripts/train_command_classifier.py \
   --manifest /workspace/persistent/silent-vision/commands/manifest.jsonl \
   --output /workspace/persistent/silent-vision/models/command_classifier.pt
 ```
 
-Then run the server with:
+Then run:
 
 ```bash
 export COMMAND_BACKEND=torch
@@ -73,9 +103,24 @@ export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/
 bash scripts/amd_real_oneclick.sh
 ```
 
-Realtime bilingual lipreading prototype for one active anonymous browser session.
+## Persistence layout
 
-## Fake mode
+```text
+/workspace/persistent/silent-vision/
+├── profiles/
+│   ├── global/
+│   └── <profileId>/
+├── models/
+│   └── command_classifier.pt      # optional torch backend
+├── cache/
+│   └── torch/
+├── commands/
+│   └── manifest.jsonl
+└── logs/
+    └── command-runs/
+```
+
+## Local fake mode
 
 ```bash
 python -m venv .venv
@@ -85,71 +130,6 @@ pytest
 uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-## ROCm development access
-
-```bash
-ssh -L 8000:127.0.0.1:8000 user@rocm-server
-```
-
-Open `http://localhost:8000` from the machine with the camera.
-
-## Persistence layout
-
-```text
-/workspace/persistent/silent-vision/
-├── models/
-│   └── minicpm-o-4_5/
-├── repos/
-│   └── Visual_Speech_Recognition_for_Multiple_Languages/
-│       ├── configs/LRS3_V_WER19.1.ini
-│       ├── configs/CMLR_V_WER8.0.ini
-│       └── benchmarks/
-├── cache/
-├── reports/
-└── logs/
-```
-
-## ROCm container
-
-```bash
-mkdir -p /workspace/persistent/silent-vision/models/minicpm-o-4_5
-mkdir -p /workspace/persistent/silent-vision/repos
-mkdir -p /workspace/persistent/silent-vision/cache/{huggingface,torch}
-mkdir -p /workspace/persistent/silent-vision/reports/{benchmarks,diagnostics}
-mkdir -p /workspace/persistent/silent-vision/logs
-docker compose -f docker/docker-compose.yml up --build
-```
-
-## Real model setup
-
-MiniCPM-o 4.5 is stored as a Hugging Face snapshot under:
-
-```text
-/workspace/persistent/silent-vision/models/minicpm-o-4_5
-```
-
-The real lip readers use `mpc001/Visual_Speech_Recognition_for_Multiple_Languages` instead of the old TorchScript placeholder files. Silent Vision does not call the upstream `infer.py` for live WebSocket windows, because that script runs its own face tracking. Instead, `scripts/mpc001_mouth_infer.py` feeds the already-cropped 75-frame mouth window directly into the mpc001 model stack. Clone the repo under:
-
-```text
-/workspace/persistent/silent-vision/repos/Visual_Speech_Recognition_for_Multiple_Languages
-```
-
-Then download and extract the model zoo packages referenced by:
-
-```text
-configs/LRS3_V_WER19.1.ini
-configs/CMLR_V_WER8.0.ini
-```
-
-The expected benchmark files include:
-
-```text
-benchmarks/LRS3/models/LRS3_V_WER19.1/model.pth
-benchmarks/CMLR/models/CMLR_V_WER8.0/model.pth
-```
-
-Install the mpc001 repository dependencies in the same Python environment used to start FastAPI before running `MODEL_BACKEND=real`.
-
 ## Verification
 
 Default fake mode:
@@ -158,16 +138,8 @@ Default fake mode:
 ./scripts/smoke_fake.sh
 ```
 
-ROCm/model mode on the Radeon 7900 server:
+ROCm command mode on the Radeon server:
 
 ```bash
 ./scripts/smoke_rocm.sh
 ```
-
-For the browser path, forward the service:
-
-```bash
-ssh -L 8000:127.0.0.1:8000 user@rocm-server
-```
-
-Then open `http://localhost:8000` on the local machine that has the camera.

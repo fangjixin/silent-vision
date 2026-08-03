@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "$0")/.."
+
 export SV_ROOT="${SV_ROOT:-/workspace/persistent/silent-vision}"
-MPC_REPO=${MPC_REPO:-$SV_ROOT/repos/Visual_Speech_Recognition_for_Multiple_Languages}
-PYTHON_BIN=${PYTHON_BIN:-/opt/venv/bin/python}
+export PERSISTENCE_ROOT="${PERSISTENCE_ROOT:-$SV_ROOT}"
+export TORCH_HOME="${TORCH_HOME:-$SV_ROOT/cache/torch}"
+export PYTHON_BIN="${PYTHON_BIN:-/opt/venv/bin/python}"
+export COMMAND_BACKEND="${COMMAND_BACKEND:-prototype}"
 
-export HF_HOME=${HF_HOME:-$SV_ROOT/cache/huggingface}
-export TORCH_HOME=${TORCH_HOME:-$SV_ROOT/cache/torch}
+mkdir -p \
+  "$SV_ROOT/logs" \
+  "$SV_ROOT/logs/command-runs" \
+  "$SV_ROOT/profiles/global" \
+  "$SV_ROOT/models" \
+  "$TORCH_HOME"
 
-mkdir -p "$SV_ROOT/downloads" "$SV_ROOT/extract" "$SV_ROOT/repos" "$SV_ROOT/logs"
-mkdir -p "$SV_ROOT/models/minicpm-o-4_5" "$HF_HOME" "$TORCH_HOME"
+check_no_removed_dependencies() {
+  if grep -E '^(transformers|huggingface-hub|accelerate|safetensors|librosa|soundfile|minicpmo-utils)([<=> ]|$)' requirements.txt; then
+    echo "removed open-vocabulary model dependency found in requirements.txt" >&2
+    exit 1
+  fi
+}
 
 check_rocm_python() {
   "$PYTHON_BIN" - <<'PY'
@@ -26,247 +38,59 @@ if torch.version.hip is None or not torch.cuda.is_available():
 PY
 }
 
-check_transformers_stack() {
+check_app_dependencies() {
   "$PYTHON_BIN" - <<'PY'
 from importlib import metadata
 
-def version(name: str) -> str:
+for package in ["fastapi", "uvicorn", "pydantic", "numpy", "cv2", "mediapipe", "av", "PIL"]:
     try:
-        return metadata.version(name)
-    except metadata.PackageNotFoundError:
-        raise SystemExit(f"{name} is not installed")
+        module_name = "opencv-python-headless" if package == "cv2" else "pillow" if package == "PIL" else package
+        print(f"{package}:", metadata.version(module_name))
+    except Exception as exc:
+        raise SystemExit(f"missing required runtime dependency {package}: {exc}") from exc
 
-hub_version = version("huggingface-hub")
-transformers_version = version("transformers")
-tokenizers_version = version("tokenizers")
-
-print("transformers:", transformers_version)
-print("tokenizers:", tokenizers_version)
-print("huggingface-hub:", hub_version)
-
-major = int(hub_version.split(".", 1)[0])
-if major >= 1:
-    raise SystemExit(
-        "huggingface-hub must be <1.0 for transformers 4.51.0; "
-        f"found {hub_version}"
-    )
-
-from transformers import AutoModel, AutoTokenizer
-
-print("transformers imports:", AutoModel.__name__, AutoTokenizer.__name__)
-PY
-}
-
-download_if_missing_or_invalid_zip() {
-  local output_name="$1"
-  local url="$2"
-  local output_path="$SV_ROOT/downloads/$output_name"
-
-  if "$PYTHON_BIN" - "$output_path" <<'PY'
-from pathlib import Path
-import sys
-import zipfile
-
-path = Path(sys.argv[1])
-if not path.exists() or path.stat().st_size == 0:
-    raise SystemExit(1)
-try:
-    with zipfile.ZipFile(path) as zf:
-        bad = zf.testzip()
-except zipfile.BadZipFile:
-    raise SystemExit(1)
-if bad is not None:
-    print(f"invalid zip member: {bad}")
-    raise SystemExit(1)
-print(f"valid zip exists; skip download: {path}")
-PY
-  then
-    return
-  fi
-
-  echo "downloading missing or invalid zip: $output_path"
-  aria2c -c -x 16 -s 16 -k 1M --check-certificate=false \
-    -o "$output_name" \
-    "$url"
-
-  "$PYTHON_BIN" - "$output_path" <<'PY'
-from pathlib import Path
-import sys
-import zipfile
-
-path = Path(sys.argv[1])
-with zipfile.ZipFile(path) as zf:
-    bad = zf.testzip()
-if bad is not None:
-    raise SystemExit(f"downloaded zip is corrupt: {path}, bad member: {bad}")
-print(f"zip verified: {path}")
-PY
-}
-
-check_rocm_python
-
-apt-get update || true
-DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates git aria2
-update-ca-certificates || true
-command -v aria2c
-
-"$PYTHON_BIN" -m pip install --upgrade pip
-"$PYTHON_BIN" -m pip install --upgrade -r requirements.txt
-"$PYTHON_BIN" -m pip install --upgrade --force-reinstall --no-deps "huggingface-hub>=0.30.0,<1.0.0"
-check_rocm_python
-check_transformers_stack
-
-"$PYTHON_BIN" - <<'PY'
 import mediapipe as mp
-
 solutions = getattr(mp, "solutions", None)
 if solutions is not None:
     face_mesh = solutions.face_mesh
 else:
     from mediapipe.python.solutions import face_mesh
-
-print("mediapipe:", getattr(mp, "__version__", None))
 print("FaceMesh:", face_mesh.FaceMesh)
 PY
-
-cd "$SV_ROOT/repos"
-if [ ! -d "$MPC_REPO/.git" ]; then
-  GIT_SSL_NO_VERIFY=true git clone https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages.git "$MPC_REPO"
-fi
-
-test -f "$MPC_REPO/configs/LRS3_V_WER19.1.ini"
-test -f "$MPC_REPO/configs/CMLR_V_WER8.0.ini"
-
-cd "$SV_ROOT/downloads"
-download_if_missing_or_invalid_zip \
-  LRS3_V_WER19.1.zip \
-  'https://github.com/fangjixin/silent-vision/releases/download/models-v1/LRS3_V_WER19.1.zip'
-download_if_missing_or_invalid_zip \
-  CMLR_V_WER8.0.zip \
-  'https://github.com/fangjixin/silent-vision/releases/download/models-v1/CMLR_V_WER8.0.zip'
-download_if_missing_or_invalid_zip \
-  lm_en_subword.zip \
-  'https://github.com/fangjixin/silent-vision/releases/download/models-v1/lm_en_subword.zip'
-download_if_missing_or_invalid_zip \
-  lm_zh.zip \
-  'https://github.com/fangjixin/silent-vision/releases/download/models-v1/lm_zh.zip'
-
-"$PYTHON_BIN" - <<'PY'
-from pathlib import Path
-import configparser
-import os
-import shutil
-import zipfile
-
-root = Path(os.environ["SV_ROOT"])
-repo = root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages"
-
-def config_paths(config_file: Path) -> dict[str, Path]:
-    cfg = configparser.ConfigParser()
-    cfg.read(config_file)
-    result = {}
-    for key in ["model_path", "model_conf", "rnnlm", "rnnlm_conf"]:
-        value = cfg.get("model", key, fallback="")
-        if value:
-            result[key] = repo / value
-    return result
-
-lrs3_paths = config_paths(repo / "configs" / "LRS3_V_WER19.1.ini")
-cmlr_paths = config_paths(repo / "configs" / "CMLR_V_WER8.0.ini")
-
-required = [
-    lrs3_paths["model_path"],
-    lrs3_paths["model_conf"],
-    lrs3_paths["rnnlm"],
-    lrs3_paths["rnnlm_conf"],
-    cmlr_paths["model_path"],
-    cmlr_paths["model_conf"],
-    cmlr_paths["rnnlm"],
-    cmlr_paths["rnnlm_conf"],
-]
-
-if all(path.exists() for path in required):
-    print("mpc001 assets already prepared; skipping extract/copy")
-    raise SystemExit(0)
-
-archives = {
-    "LRS3_V_WER19.1.zip": "lrs3_model",
-    "CMLR_V_WER8.0.zip": "cmlr_model",
-    "lm_en_subword.zip": "lrs3_lm",
-    "lm_zh.zip": "cmlr_lm",
 }
 
-for zip_name, extract_name in archives.items():
-    src = root / "downloads" / zip_name
-    dst = root / "extract" / extract_name
-    if not src.exists():
-        raise SystemExit(f"missing zip file: {src}")
-    dst.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(src) as zf:
-        zf.extractall(dst)
-
-def find_asset_dir(base: Path) -> Path:
-    matches = [p.parent for p in base.rglob("model.pth") if (p.parent / "model.json").exists()]
-    if not matches:
-        raise SystemExit(f"no model.pth + model.json found under {base}")
-    return matches[0]
-
-jobs = [
-    (root / "extract" / "lrs3_model", lrs3_paths["model_path"].parent),
-    (root / "extract" / "cmlr_model", cmlr_paths["model_path"].parent),
-    (root / "extract" / "lrs3_lm", lrs3_paths["rnnlm"].parent),
-    (root / "extract" / "cmlr_lm", cmlr_paths["rnnlm"].parent),
-]
-
-for src_base, target_dir in jobs:
-    src_dir = find_asset_dir(src_base)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for name in ["model.pth", "model.json"]:
-        shutil.copy2(src_dir / name, target_dir / name)
-        print("copied", target_dir / name)
-PY
-
-"$PYTHON_BIN" - <<'PY'
+check_command_backend() {
+  "$PYTHON_BIN" - <<'PY'
 from pathlib import Path
-from configparser import ConfigParser
 import os
 
-root = Path(os.environ["SV_ROOT"])
-repo = root / "repos" / "Visual_Speech_Recognition_for_Multiple_Languages"
-target_dir = root / "configs"
-target_dir.mkdir(parents=True, exist_ok=True)
-lm_weight = os.environ.get("MPC001_LM_WEIGHT", "0.0")
+backend = os.environ.get("COMMAND_BACKEND", "prototype")
+root = Path(os.environ["PERSISTENCE_ROOT"])
+print("command backend:", backend)
+print("persistence root:", root)
 
-configs = {
-    "LRS3_V_WER19.1.ini": "LRS3_V_WER19.1_silent_vision.ini",
-    "CMLR_V_WER8.0.ini": "CMLR_V_WER8.0_silent_vision.ini",
+if backend == "prototype":
+    (root / "profiles" / "global").mkdir(parents=True, exist_ok=True)
+    print("prototype profiles:", root / "profiles")
+elif backend == "torch":
+    checkpoint = os.environ.get("COMMAND_CLASSIFIER_CHECKPOINT")
+    if not checkpoint:
+        raise SystemExit("COMMAND_CLASSIFIER_CHECKPOINT is required when COMMAND_BACKEND=torch")
+    path = Path(checkpoint)
+    if not path.exists():
+        raise SystemExit(f"COMMAND_CLASSIFIER_CHECKPOINT does not exist: {path}")
+    print("command checkpoint:", path)
+else:
+    raise SystemExit(f"unsupported COMMAND_BACKEND: {backend}")
+PY
 }
 
-for source_name, target_name in configs.items():
-    source = repo / "configs" / source_name
-    target = target_dir / target_name
-    parser = ConfigParser()
-    parser.read(source)
-    if not parser.has_section("decode"):
-        raise SystemExit(f"missing [decode] section in {source}")
-    parser.set("decode", "lm_weight", lm_weight)
-    with target.open("w") as f:
-        parser.write(f)
-    print(f"wrote {target} with decode.lm_weight={lm_weight}")
-PY
-
-"$PYTHON_BIN" -m pip install --upgrade --force-reinstall --no-deps "huggingface-hub>=0.30.0,<1.0.0"
-check_transformers_stack
-"$PYTHON_BIN" - <<'PY'
-from huggingface_hub import snapshot_download
-import os
-from pathlib import Path
-
-snapshot_download(
-    repo_id="openbmb/MiniCPM-o-4_5",
-    local_dir=str(Path(os.environ["SV_ROOT"]) / "models" / "minicpm-o-4_5"),
-)
-PY
+check_no_removed_dependencies
 check_rocm_python
+"$PYTHON_BIN" -m pip install --upgrade pip
+"$PYTHON_BIN" -m pip install --upgrade -r requirements.txt
+check_rocm_python
+check_app_dependencies
+check_command_backend
 
 echo "setup complete"

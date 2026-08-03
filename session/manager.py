@@ -1,9 +1,6 @@
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-
-from lip.base import MouthFrame, MouthWindow
 
 
 class SessionError(Exception):
@@ -27,34 +24,23 @@ class CreatedSession:
 @dataclass
 class ActiveSession:
     session_id: str
-    window_frames: int
-    inference_stride: int
     created_at: datetime
     last_seen_at: datetime
-    frames: deque[MouthFrame] = field(default_factory=deque)
-    accepted_frame_count: int = 0
-    last_inference_frame_count: int = 0
     active_inference_task: object | None = None
     inference_cancel_event: object | None = None
-    latest_pending_window: MouthWindow | None = None
     streaming: bool = False
     accepting_frames: bool = False
     stream_generation: int = 0
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def reset_stream(self) -> None:
-        self.frames.clear()
-        self.accepted_frame_count = 0
-        self.last_inference_frame_count = 0
-        self.latest_pending_window = None
+        self.metadata.clear()
         self.streaming = True
         self.accepting_frames = True
         self.stream_generation += 1
 
     def stop_stream(self) -> None:
-        self.frames.clear()
-        self.accepted_frame_count = 0
-        self.last_inference_frame_count = 0
-        self.latest_pending_window = None
+        self.metadata.clear()
         self.streaming = False
         self.accepting_frames = False
         self.stream_generation += 1
@@ -62,30 +48,10 @@ class ActiveSession:
     def commit_stream(self) -> None:
         self.accepting_frames = False
 
-    def add_mouth_frame(self, frame: MouthFrame) -> MouthWindow | None:
-        if len(self.frames) == self.window_frames:
-            self.frames.popleft()
-        self.frames.append(frame)
-        self.accepted_frame_count += 1
-        if len(self.frames) < self.window_frames:
-            return None
-        if self.accepted_frame_count - self.last_inference_frame_count < self.inference_stride:
-            return None
-        self.last_inference_frame_count = self.accepted_frame_count
-        snapshot = tuple(self.frames)
-        return MouthWindow(
-            session_id=self.session_id,
-            start_sequence=snapshot[0].sequence,
-            end_sequence=snapshot[-1].sequence,
-            frames=snapshot,
-        )
-
 
 class SessionManager:
-    def __init__(self, pending_ttl: timedelta, window_frames: int, inference_stride: int) -> None:
+    def __init__(self, pending_ttl: timedelta) -> None:
         self.pending_ttl = pending_ttl
-        self.window_frames = window_frames
-        self.inference_stride = inference_stride
         self._pending: dict[str, datetime] = {}
         self._active: dict[str, ActiveSession] = {}
 
@@ -102,8 +68,6 @@ class SessionManager:
         now = datetime.now(timezone.utc)
         active = ActiveSession(
             session_id=session_id,
-            window_frames=self.window_frames,
-            inference_stride=self.inference_stride,
             created_at=now,
             last_seen_at=now,
         )

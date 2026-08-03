@@ -2,7 +2,6 @@ FROM rocm/pytorch:latest
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/workspace/persistent/silent-vision/cache/huggingface
 ENV TORCH_HOME=/workspace/persistent/silent-vision/cache/torch
 
 COPY requirements.txt /app/requirements.txt

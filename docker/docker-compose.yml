@@ -4,7 +4,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     environment:
-      MODEL_BACKEND: real
+      COMMAND_BACKEND: prototype
       PERSISTENCE_ROOT: /workspace/persistent/silent-vision
       ALLOWED_ORIGINS: http://localhost:8000
       LOG_TRANSCRIPTS: "false"

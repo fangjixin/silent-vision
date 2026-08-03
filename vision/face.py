@@ -1,13 +1,10 @@
 from dataclasses import dataclass
-from io import BytesIO
 from typing import Protocol
 import warnings
 
 import numpy as np
-from PIL import Image, UnidentifiedImageError
 
 from backend.config import Settings
-from backend.schemas import ErrorCode
 
 MOUTH_LANDMARK_IDS = (
     61,
@@ -35,12 +32,6 @@ MOUTH_LANDMARK_IDS = (
 )
 
 
-class FrameDecodeError(ValueError):
-    def __init__(self, code: ErrorCode, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
 @dataclass(frozen=True)
 class FaceDetectionResult:
     face_detected: bool
@@ -51,25 +42,6 @@ class FaceDetectionResult:
 class FaceDetectorProtocol(Protocol):
     def detect(self, image_rgb: np.ndarray) -> FaceDetectionResult:
         raise NotImplementedError
-
-
-def decode_jpeg_frame(data: bytes, settings: Settings) -> np.ndarray:
-    if len(data) > settings.max_jpeg_bytes:
-        raise FrameDecodeError(ErrorCode.FRAME_TOO_LARGE, "jpeg payload exceeds MAX_JPEG_BYTES")
-    try:
-        with Image.open(BytesIO(data)) as image:
-            image_rgb = image.convert("RGB")
-            width, height = image_rgb.size
-            if width > settings.max_frame_width or height > settings.max_frame_height:
-                raise FrameDecodeError(
-                    ErrorCode.FRAME_TOO_LARGE_DIMENSIONS,
-                    "decoded frame dimensions exceed configured limits",
-                )
-            return np.asarray(image_rgb, dtype=np.uint8)
-    except FrameDecodeError:
-        raise
-    except (UnidentifiedImageError, OSError) as exc:
-        raise FrameDecodeError(ErrorCode.INVALID_JPEG, "payload is not a valid jpeg") from exc
 
 
 class FaceDetector:
@@ -112,7 +84,7 @@ class FakeFaceDetector:
 
 
 def create_face_detector(settings: Settings) -> FaceDetectorProtocol:
-    if settings.model_backend == "fake":
+    if settings.command_backend == "fake":
         return FakeFaceDetector()
     return FaceDetector()
 

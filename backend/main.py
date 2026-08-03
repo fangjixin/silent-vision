@@ -12,9 +12,6 @@ from api.websocket import router as websocket_router
 from agent.agent import AgentPolicy
 from backend.config import Settings, get_settings
 from command.inference import build_command_classifier
-from lip.fake import FakeLipReader
-from lip.inference import LipInferenceEngine
-from llm.minicpm import build_minicpm_interpreter
 from session.manager import SessionManager
 from vision.face import create_face_detector
 
@@ -24,31 +21,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(app_settings)
     app = FastAPI(title="Silent Vision")
     app.state.settings = app_settings
-    app.state.models = {"backend": app_settings.model_backend, "ready": False}
-    app.state.session_manager = SessionManager(
-        pending_ttl=timedelta(seconds=30),
-        window_frames=app_settings.window_frames,
-        inference_stride=app_settings.inference_stride,
-    )
-    needs_transcription = app_settings.recognition_mode == "transcription" or app_settings.command_fallback_transcription
-    if app_settings.model_backend == "real" and needs_transcription:
-        from lip.avhubert import AVHuBERTLipReader
-        from lip.cmlr import CMLRLipReader
-
-        readers = [AVHuBERTLipReader(app_settings), CMLRLipReader(app_settings)]
-    elif needs_transcription:
-        readers = [
-            FakeLipReader(model="avhubert", language="en", text="turn on the light", confidence=0.72),
-            FakeLipReader(model="cmlr", language="zh", text="请打开灯", confidence=0.76),
-        ]
-    else:
-        readers = []
-    app.state.lip_engine = LipInferenceEngine(readers)
+    app.state.models = {"backend": app_settings.command_backend, "ready": False}
+    app.state.session_manager = SessionManager(pending_ttl=timedelta(seconds=30))
     app.state.command_classifier = build_command_classifier(app_settings)
     app.state.inference_lock = asyncio.Lock()
-    app.state.semantic_interpreter = None
-    if app_settings.recognition_mode == "transcription" or app_settings.command_fallback_transcription:
-        app.state.semantic_interpreter = build_minicpm_interpreter(app_settings)
     app.state.agent_policy = AgentPolicy(threshold=app_settings.model_confidence_threshold)
     app.state.face_detector = create_face_detector(app_settings)
     app.state.models["ready"] = True
@@ -79,7 +55,7 @@ def configure_logging(settings: Settings) -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     logging.getLogger().setLevel(level)
-    for logger_name in ("api", "backend", "lip", "llm", "vision", "agent", "session"):
+    for logger_name in ("api", "backend", "vision", "agent", "session", "command", "video"):
         logging.getLogger(logger_name).setLevel(level)
 
 
