@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -34,6 +34,8 @@ class PrototypeMatch:
     logits: dict[str, float]
     reason: str
     profile_id: str | None = None
+    matched_metadata: dict[str, Any] = field(default_factory=dict)
+    matched_sample_path: str | None = None
 
 
 def extract_roi_embedding(mouth_frames: np.ndarray, feature_dim: int = 128) -> np.ndarray:
@@ -171,15 +173,22 @@ def match_prototypes(
 
     query = _unit_normalize(np.asarray(embedding, dtype=np.float32))
     grouped_scores: dict[str, list[float]] = {}
+    best_sample_by_intent: dict[str, tuple[float, PrototypeSample]] = {}
     for sample in samples:
         sample_embedding = _unit_normalize(sample.embedding.astype(np.float32))
         score = _cosine_similarity_01(query, sample_embedding)
         grouped_scores.setdefault(sample.intent, []).append(score)
+        current = best_sample_by_intent.get(sample.intent)
+        if current is None or score > current[0]:
+            best_sample_by_intent[sample.intent] = (score, sample)
 
     logits = {intent: float(np.mean(scores)) for intent, scores in grouped_scores.items()}
     ranked = sorted(logits.items(), key=lambda item: item[1], reverse=True)
     top_k = [{"intent": intent, "confidence": round(score, 6)} for intent, score in ranked[:3]]
     best_intent, confidence = ranked[0]
+    best_sample = best_sample_by_intent.get(best_intent, (0.0, None))[1]
+    matched_metadata = dict(best_sample.metadata) if best_sample is not None else {}
+    matched_sample_path = str(best_sample.sample_path) if best_sample is not None and best_sample.sample_path else None
     second = ranked[1][1] if len(ranked) > 1 else 0.0
     margin = max(0.0, confidence - second)
 
@@ -222,6 +231,8 @@ def match_prototypes(
         top_k=top_k,
         logits={key: round(value, 6) for key, value in logits.items()},
         reason="accepted",
+        matched_metadata=matched_metadata,
+        matched_sample_path=matched_sample_path,
     )
 
 

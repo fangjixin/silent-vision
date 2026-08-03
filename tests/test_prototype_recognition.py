@@ -42,13 +42,13 @@ def test_save_and_load_profile_prototype(tmp_path):
     assert samples[0].metadata["phrase"] == "请开灯"
 
 
-def sample(intent: str, vector: np.ndarray) -> PrototypeSample:
+def sample(intent: str, vector: np.ndarray, metadata: dict | None = None) -> PrototypeSample:
     return PrototypeSample(
         profile_id="global",
         intent=intent,
         embedding=vector.astype(np.float32),
         sample_path=None,
-        metadata={},
+        metadata=metadata or {},
     )
 
 
@@ -64,6 +64,29 @@ def test_match_prototypes_accepts_clear_top1():
     assert match.accepted is True
     assert match.intent == "LIGHT_ON"
     assert match.reason == "accepted"
+
+
+def test_match_prototypes_returns_matched_phrase_metadata():
+    query = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    samples = [
+        sample(
+            "LIGHT_ON",
+            np.array([1.0, 0.0, 0.0]),
+            metadata={"phrase": "你好，请帮我打开灯", "language": "zh"},
+        ),
+        sample(
+            "LIGHT_OFF",
+            np.array([0.0, 1.0, 0.0]),
+            metadata={"phrase": "please turn off the light", "language": "en"},
+        ),
+    ]
+
+    match = match_prototypes(query, samples, confidence_threshold=0.8, margin_threshold=0.2)
+
+    assert match.accepted is True
+    assert match.intent == "LIGHT_ON"
+    assert match.matched_metadata["phrase"] == "你好，请帮我打开灯"
+    assert match.matched_metadata["language"] == "zh"
 
 
 def test_match_prototypes_rejects_close_margin():

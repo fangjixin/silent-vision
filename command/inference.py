@@ -208,6 +208,9 @@ class PrototypeCommandClassifierBackend:
 
         intent = CommandIntent(last_match.intent)
         executable = last_match.accepted and intent in EXECUTABLE_INTENTS
+        matched_metadata = dict(last_match.matched_metadata)
+        matched_phrase = _clean_metadata_string(matched_metadata.get("phrase"))
+        matched_language = _clean_language(matched_metadata.get("language"))
         result_metadata = {
             **metadata,
             "backend": "prototype",
@@ -215,6 +218,15 @@ class PrototypeCommandClassifierBackend:
             "profileScope": last_scope,
             "latencyMs": int((perf_counter() - started) * 1000),
         }
+        if last_match.accepted:
+            result_metadata["displayText"] = matched_phrase or intent.value
+            if matched_phrase:
+                result_metadata["matchedPhrase"] = matched_phrase
+            if matched_language:
+                result_metadata["matchedLanguage"] = matched_language
+                result_metadata["language"] = matched_language
+            if last_match.matched_sample_path:
+                result_metadata["matchedSamplePath"] = last_match.matched_sample_path
         return CommandDecision(
             intent=intent,
             accepted=last_match.accepted,
@@ -243,7 +255,16 @@ def _simple_visual_features(mouth_frames: np.ndarray, feature_dim: int) -> np.nd
 
 def _metadata_string(metadata: dict[str, object], key: str) -> str | None:
     value = metadata.get(key)
-    return value if isinstance(value, str) and value.strip() else None
+    return _clean_metadata_string(value)
+
+
+def _clean_metadata_string(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _clean_language(value: object) -> str | None:
+    language = _clean_metadata_string(value)
+    return language if language in {"zh", "en"} else None
 
 
 def save_command_debug(settings: Settings, session_id: str, decision: CommandDecision) -> Path:
