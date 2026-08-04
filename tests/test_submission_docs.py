@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from pypdf import PdfReader
+
 REQUIRED_README_HEADINGS = [
     "## What Silent Vision Does",
     "## Creator Workflow",
@@ -47,3 +49,19 @@ def test_submission_index_names_required_materials():
     assert "demo-video-script.md" in text
     assert "https://github.com/fangjixin/silent-vision" in text
     assert "Track 1, Jixin Fang, Silent Vision" in text
+
+
+def test_profile_and_poster_pdf_structure():
+    profile = PdfReader("submission/Silent-Vision-Project-Profile.pdf")
+    poster = PdfReader("submission/Silent-Vision-Poster.pdf")
+    assert len(profile.pages) == 6
+    assert len(poster.pages) == 1
+    profile_text = "\n".join(page.extract_text() or "" for page in profile.pages)
+    for phrase in [
+        "Target users",
+        "System architecture",
+        "Model and algorithm",
+        "AMD Radeon and ROCm",
+    ]:
+        assert phrase in profile_text
+    assert Path("submission/Silent-Vision-Poster.png").exists()
