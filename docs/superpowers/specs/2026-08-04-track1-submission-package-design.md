@@ -21,9 +21,10 @@ or undesirable. It is not presented as open-vocabulary speech transcription.
 ### Core statement
 
 Silent Vision turns a short camera clip of a spoken command into a bounded,
-auditable intent. The current proof of concept controls studio-adjacent actions
-such as lighting and access. The product direction expands the same interface to
-recording, capture, and editing workflows.
+auditable intent. The current proof of concept classifies studio-adjacent intents
+such as lighting and access; it does not yet control an external device. The
+submission implementation adds an observable creator workflow in which accepted
+visual commands start and stop a browser recording or capture a still frame.
 
 ### Target users
 
@@ -40,9 +41,11 @@ recording, capture, and editing workflows.
   arbitrary speech.
 - `UNKNOWN` and low-confidence results are rejected and never executed.
 - The current executable proof-of-concept intents are `LIGHT_ON`, `LIGHT_OFF`,
-  and `OPEN_DOOR`.
-- Creator-specific actions are a product direction unless they are implemented and
-  verified before the final submission.
+  and `OPEN_DOOR`, but the current agent boundary only returns structured
+  decisions for them.
+- The submission adds `START_RECORDING`, `STOP_RECORDING`, and `CAPTURE_FRAME`.
+  Each accepted creator intent must cause an observable browser action and produce
+  a downloadable WebM or PNG artifact.
 - No accuracy, throughput, latency, or memory number appears without a saved run
   that produced it.
 
@@ -63,15 +66,46 @@ ROCm:
 7. Confidence and top-1 margin thresholds either accept a bounded intent or
    return `UNKNOWN`.
 8. Only accepted executable intents reach the agent boundary.
+9. The browser creator controller maps `START_RECORDING`, `STOP_RECORDING`, and
+   `CAPTURE_FRAME` to recording and capture operations on the active camera
+   stream. Rejected commands never reach this controller.
 
 The production startup must fail if ROCm is unavailable, the GPU is not visible,
 or the classifier checkpoint is missing. There is no silent CPU fallback.
+
+### Creator workflow
+
+The browser keeps one camera stream alive while Creator Mode is active. Short
+command clips and the creator recording may use separate `MediaRecorder`
+instances over that stream.
+
+- `START_RECORDING` starts a creator recording after the command is accepted.
+- `STOP_RECORDING` stops the active creator recording and exposes the resulting
+  WebM as a local download.
+- `CAPTURE_FRAME` renders the current preview frame to a canvas and exposes a PNG
+  download.
+- Repeated start, stop-without-start, missing camera, and browser recorder errors
+  produce visible status messages without inventing a successful artifact.
+
+The first complete Track 1 demo must show at least one creator recording or still
+capture from command recognition through the final downloadable result.
 
 ### Calibration path
 
 The NumPy prototype matcher remains available for collecting and checking small
 sets of examples. It is described as a calibration and development tool, not as
 the production inference engine and not as evidence of GPU acceleration.
+
+Saved calibration samples are also the source dataset for the Torch classifier.
+A manifest builder scans the persisted global profile, records the real
+`mouth_roi.npy` path, intent, phrase, language, and sample identifier, and creates
+a deterministic train/validation split. Training must fail with a clear message
+if required creator intents have no samples or if the split is not usable.
+
+The training command produces a checkpoint and a machine-readable run summary.
+The validation command evaluates the held-out split and produces a JSON report.
+Neither artifact is described as successful Radeon evidence until the commands
+have run on the Radeon environment.
 
 ### GPU evidence
 
@@ -97,7 +131,8 @@ Rewrite the existing README as a reproducible English guide with these sections:
 4. AMD Radeon and ROCm execution path.
 5. System requirements and dependency list.
 6. Radeon setup and GPU-only startup.
-7. Dataset preparation, classifier training, and validation.
+7. Dataset preparation from calibration samples, classifier training, and
+   held-out validation.
 8. Browser usage and calibration workflow.
 9. Local fake mode for tests only.
 10. Docker notes, persistence layout, tests, privacy, and known limitations.
@@ -143,8 +178,9 @@ the Radeon environment. The sequence is:
 1. Problem and use case.
 2. ROCm and GPU verification in the terminal.
 3. GPU-only server startup and checkpoint load.
-4. Successful commands from the browser.
-5. One rejected or unknown command.
+4. Creator Mode start, an accepted creator command, and the resulting WebM or PNG
+   artifact.
+5. One rejected or unknown command that produces no creator action.
 6. Runtime latency and result inspection.
 7. Closing summary and repository link.
 
@@ -196,6 +232,7 @@ docs/submission/
   poster-copy.md
 scripts/
   generate_submission_assets.py
+  build_command_manifest.py
 README.md
 ```
 
@@ -209,12 +246,19 @@ After the local package is verified:
 
 1. Fork `AMD-DEV-CONTEST/Radeon-hackathon-2026-07` under the authenticated GitHub
    account.
-2. Add the complete project under `submissions/track1-silent-vision/`, following
-   the established contest-repository convention.
+2. Add a self-contained contest bundle under
+   `submissions/track1-silent-vision/`, following the established
+   contest-repository convention.
 3. Keep generated caches, local datasets, prototype recordings, and large model
    checkpoints out of Git.
-4. Open a pull request titled `Track 1, Jixin Fang, Silent Vision`.
-5. Use the prepared English description and verify every link from the PR diff.
+4. Build the contest bundle from an allowlist containing runtime source, tests,
+   deployment files, dependency files, the root English README, and final English
+   submission artifacts. Exclude internal planning documents and historical
+   non-English specifications.
+5. Audit all submission-facing prose for English-only compliance. Multilingual
+   sample phrases may remain only when clearly identified as product data.
+6. Open a pull request titled `Track 1, Jixin Fang, Silent Vision`.
+7. Use the prepared English description and verify every link from the PR diff.
 
 Because the local machine currently has no `gh` command, the final fork and PR
 step uses an authenticated GitHub browser session, a GitHub token supplied through
@@ -234,6 +278,13 @@ Before delivery:
 - Use PDF text extraction to confirm headings and required topics are present.
 - Confirm poster PDF and PNG dimensions and legibility.
 - Confirm submission links use relative paths and resolve locally.
+- Verify the creator workflow produces a real WebM or PNG and that a rejected
+  command produces no artifact.
+- Verify the manifest contains real `mouth_roi.npy` paths and both train and
+  validation records.
+- Verify Torch production startup refuses to run without ROCm instead of selecting
+  CPU.
+- Verify the contest bundle contains no non-English internal planning documents.
 - Run a secret and large-file check before copying into the contest fork.
 
 The demo video is not marked complete until the Radeon recording exists and has
