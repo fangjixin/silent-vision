@@ -65,5 +65,62 @@ def test_bundle_rejects_a_symlink_destination(tmp_path):
     destination = tmp_path / "bundle"
     destination.symlink_to(destination_target, target_is_directory=True)
 
-    with pytest.raises(ValueError, match="symlink destination"):
+    with pytest.raises(ValueError, match="symlink"):
         build_bundle(source, destination)
+
+
+def test_bundle_rejects_destination_beneath_a_symlinked_ancestor(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "README.md").write_text("# Safe source\n", encoding="utf-8")
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    sentinel = victim / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    alias = tmp_path / "alias"
+    alias.symlink_to(victim, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        build_bundle(source, alias / "bundle")
+
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_bundle_rejects_source_beneath_a_symlinked_ancestor(tmp_path):
+    real_parent = tmp_path / "real-parent"
+    source = real_parent / "source"
+    source.mkdir(parents=True)
+    (source / "README.md").write_text("# Safe source\n", encoding="utf-8")
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        build_bundle(alias / "source", tmp_path / "bundle")
+
+
+def test_bundle_rejects_a_broken_root_allowlist_symlink(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "README.md").symlink_to(source / "missing-readme.md")
+
+    with pytest.raises(ValueError, match="symlink"):
+        build_bundle(source, tmp_path / "bundle")
+
+
+@pytest.mark.parametrize("destination_kind", ["same", "ancestor", "descendant"])
+def test_bundle_rejects_destination_that_overlaps_source(tmp_path, destination_kind):
+    source = tmp_path / "source"
+    backend = source / "backend"
+    backend.mkdir(parents=True)
+    sentinel = backend / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    destinations = {
+        "same": source,
+        "ancestor": tmp_path,
+        "descendant": backend,
+    }
+    with pytest.raises(ValueError, match="overlap"):
+        build_bundle(source, destinations[destination_kind])
+
+    assert sentinel.read_text(encoding="utf-8") == "keep"

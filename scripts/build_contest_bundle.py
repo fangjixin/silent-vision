@@ -95,14 +95,32 @@ def _is_excluded(relative_path: Path) -> bool:
     )
 
 
+def _reject_symlink_path(path: Path, label: str) -> None:
+    """Reject a path when it or any lexical ancestor is a symlink."""
+    absolute_path = path if path.is_absolute() else Path.cwd() / path
+    candidate = Path(absolute_path.anchor)
+    for component in absolute_path.parts[1:]:
+        candidate /= component
+        if candidate.is_symlink():
+            raise ValueError(f"Contest bundle rejects symlink in {label}: {candidate}")
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
 def _allowed_files(source: Path) -> list[Path]:
     files: list[Path] = []
     for name in sorted(ROOT_FILES):
         candidate = source / name
-        if not candidate.exists():
-            continue
         if candidate.is_symlink():
             raise ValueError(f"Contest bundle rejects symlink: {candidate}")
+        if not candidate.exists():
+            continue
         if (
             candidate.is_file()
             and not _is_excluded(candidate.relative_to(source))
@@ -113,10 +131,10 @@ def _allowed_files(source: Path) -> list[Path]:
     directories = [*ALLOWED_DIRECTORIES, "docs/submission"]
     for name in directories:
         directory = source / name
-        if not directory.exists():
-            continue
         if directory.is_symlink():
             raise ValueError(f"Contest bundle rejects symlink: {directory}")
+        if not directory.exists():
+            continue
         for candidate in sorted(directory.rglob("*")):
             if candidate.is_symlink():
                 raise ValueError(f"Contest bundle rejects symlink: {candidate}")
@@ -143,14 +161,18 @@ def _audit_markdown(destination: Path) -> None:
 
 def build_bundle(source: Path, destination: Path) -> list[Path]:
     """Copy only reviewed runtime and submission files into *destination*."""
+    _reject_symlink_path(source, "source path")
+    _reject_symlink_path(destination, "destination path")
     source = source.resolve()
-    if destination.is_symlink():
-        raise ValueError(f"Contest bundle rejects symlink destination: {destination}")
     destination = destination.resolve()
     if not source.is_dir():
         raise ValueError(f"Contest bundle source is not a directory: {source}")
-    if source == destination:
-        raise ValueError("Contest bundle destination must differ from its source")
+    if _is_within(source, destination):
+        raise ValueError("Contest bundle destination must not overlap its source")
+    if _is_within(destination, source):
+        relative_destination = destination.relative_to(source)
+        if not relative_destination.parts or relative_destination.parts[0] != "dist":
+            raise ValueError("Contest bundle destination must not overlap its source")
     files = _allowed_files(source)
     if destination.exists():
         shutil.rmtree(destination)
