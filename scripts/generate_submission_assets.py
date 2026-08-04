@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the reviewed Silent Vision project profile and poster assets."""
+"""Generate the reviewed Silent Vision project profile and poster assets.
+
+This module is the canonical copy and layout source for generated submission
+artifacts. The Markdown files under ``docs/submission`` are reviewed reference
+copy and must be updated alongside high-risk copy or status changes here.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +27,15 @@ POSTER_SOURCE = ROOT / "docs/submission/poster-copy.md"
 SUBMISSION = ROOT / "submission"
 PDF_OUTPUT = ROOT / "output/pdf"
 REPOSITORY_URL = "https://github.com/fangjixin/silent-vision"
+PROFILE_EVIDENCE_STATUS = (
+    "Pending: final Radeon checkpoint, held-out validation report, selected "
+    "environment record, Creator Mode actions, and the 3-5 minute end-to-end "
+    "video. No accuracy or latency number is published."
+)
+POSTER_EVIDENCE_STATUS = (
+    "Final Radeon run, trained checkpoint, validation evidence, Creator Mode "
+    "actions, and recorded demo are pending."
+)
 
 CHARCOAL = HexColor("#101418")
 OFF_WHITE = HexColor("#F4F1EA")
@@ -36,13 +50,16 @@ PALE_GRAY = HexColor("#E8E8E3")
 def _read_reviewed_copy() -> tuple[str, str]:
     profile = PROFILE_SOURCE.read_text(encoding="utf-8")
     poster = POSTER_SOURCE.read_text(encoding="utf-8")
-    required = [
-        "Applicant: Jixin Fang",
-        REPOSITORY_URL,
-        "Final Radeon run and evidence pending.",
+    required = {
+        "profile": (profile, ["Applicant: Jixin Fang", REPOSITORY_URL, PROFILE_EVIDENCE_STATUS]),
+        "poster": (poster, [REPOSITORY_URL, POSTER_EVIDENCE_STATUS]),
+    }
+    missing = [
+        f"{document}: {phrase}"
+        for document, (text, phrases) in required.items()
+        for phrase in phrases
+        if phrase not in " ".join(text.split())
     ]
-    combined = f"{profile}\n{poster}"
-    missing = [phrase for phrase in required if phrase not in combined]
     if missing:
         raise ValueError(f"Reviewed submission copy is missing: {missing}")
     return profile, poster
@@ -485,7 +502,7 @@ def _profile_page_six(pdf: canvas.Canvas) -> None:
     _label(pdf, "Evidence status", 58, 304)
     _paragraph(
         pdf,
-        "Pending: final Radeon checkpoint, held-out validation report, selected environment record, Creator Mode actions, and the 3-5 minute end-to-end video. No accuracy or latency number is published.",
+        PROFILE_EVIDENCE_STATUS,
         58,
         278,
         width - 116,
@@ -651,7 +668,7 @@ def build_poster_pdf(output: Path) -> None:
     _label(pdf, "Evidence status", 78, 182)
     _paragraph(
         pdf,
-        "Final Radeon run, trained checkpoint, validation evidence, Creator Mode actions, and recorded demo are pending.",
+        POSTER_EVIDENCE_STATUS,
         78,
         154,
         width - 396,

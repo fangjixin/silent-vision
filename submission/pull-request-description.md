@@ -9,23 +9,24 @@ browser recording or still-image artifact.
 
 The intended Track 1 demonstration uses CPU video preprocessing and a PyTorch
 temporal classifier on AMD Radeon through ROCm. The final Radeon checkpoint,
-held-out validation evidence, Creator Mode artifact flow, and video must be added
-before this submission is presented as complete.
+held-out validation evidence, Creator Mode artifact flow, demo video, and video
+URL must be added before this submission is presented as complete.
 
 ## Requirement map
 
-- [x] English source and reproduction guide: [`README.md`](../README.md)
+- [x] English source and reproduction guide:
+  `submissions/track1-silent-vision/README.md`
 - [x] Editable six-section project profile copy:
-  [`docs/submission/project-profile-source.md`](../docs/submission/project-profile-source.md)
-- [ ] Generated project profile PDF:
-  [`submission/Silent-Vision-Project-Profile.pdf`](Silent-Vision-Project-Profile.pdf)
+  `submissions/track1-silent-vision/docs/submission/project-profile-source.md`
+- [x] Generated project profile PDF:
+  `submissions/track1-silent-vision/submission/Silent-Vision-Project-Profile.pdf`
 - [x] Editable poster copy:
-  [`docs/submission/poster-copy.md`](../docs/submission/poster-copy.md)
-- [ ] Generated poster PDF and PNG:
-  [`submission/Silent-Vision-Poster.pdf`](Silent-Vision-Poster.pdf) and
-  [`submission/Silent-Vision-Poster.png`](Silent-Vision-Poster.png)
+  `submissions/track1-silent-vision/docs/submission/poster-copy.md`
+- [x] Generated poster PDF and PNG:
+  `submissions/track1-silent-vision/submission/Silent-Vision-Poster.pdf` and
+  `submissions/track1-silent-vision/submission/Silent-Vision-Poster.png`
 - [x] Demo recording script and safety checklist:
-  [`submission/demo-video-script.md`](demo-video-script.md)
+  `submissions/track1-silent-vision/submission/demo-video-script.md`
 - [ ] Demo video: added after the recorded Radeon run
 - [x] Source repository: <https://github.com/fangjixin/silent-vision>
 

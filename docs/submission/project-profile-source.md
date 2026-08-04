@@ -6,6 +6,10 @@ Track: 1
 
 Repository: <https://github.com/fangjixin/silent-vision>
 
+Copy contract: `scripts/generate_submission_assets.py` is the canonical copy and
+layout source for the generated PDF. This file is reviewed reference copy and
+must be updated alongside high-risk copy or status changes in the generator.
+
 ## 1. Project Summary
 
 Silent Vision classifies a short, silent camera clip as one command from a
@@ -118,5 +122,8 @@ ROCm guard scripts, and record the selected environment.
 Next steps are concrete: finish a balanced calibration dataset, build a real
 manifest, train on Radeon, evaluate a held-out manifest, save the checkpoint and
 reports, implement and test the planned browser creator actions, and record the
-3-5 minute end-to-end video. No accuracy or latency number should be published
-until those runs exist.
+3-5 minute end-to-end video.
+
+Pending: final Radeon checkpoint, held-out validation report, selected
+environment record, Creator Mode actions, and the 3-5 minute end-to-end video.
+No accuracy or latency number is published.

@@ -1,5 +1,9 @@
 # Silent Vision
 
+Copy contract: `scripts/generate_submission_assets.py` is the canonical copy and
+layout source for the generated poster. This file is reviewed reference copy and
+must be updated alongside high-risk copy or status changes in the generator.
+
 ## Silent control when audio is not an option.
 
 Closed-set visual command recognition from a short camera clip.
@@ -38,7 +42,8 @@ device or create a browser media artifact.
 Intended demo path: CPU video preprocessing, then PyTorch temporal
 classification on AMD Radeon through ROCm.
 
-Final Radeon run and evidence pending.
+Final Radeon run, trained checkpoint, validation evidence, Creator Mode actions,
+and recorded demo are pending.
 
 ### Source
 

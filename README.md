@@ -130,6 +130,7 @@ falls back to the browser's default WebM encoder.
 Local installation:
 
 ```bash
+cd /path/to/silent-vision
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
@@ -225,10 +226,21 @@ This heading describes the explicit Radeon demo configuration. It is not a
 claim that every application entry point rejects CPU fallback.
 
 On an AMD Radeon machine with a ROCm PyTorch environment at
-`/opt/venv/bin/python`, use:
+`/opt/venv/bin/python`, start from the root of an ordinary clone:
+
+```bash
+cd /path/to/silent-vision
+```
+
+For the event-hosted Radeon workspace example, the repository root is:
 
 ```bash
 cd /workspace/template-repos/template-907/repo
+```
+
+Then configure and start the explicit Radeon path:
+
+```bash
 export PERSISTENCE_ROOT=/workspace/persistent/silent-vision
 export COMMAND_BACKEND=torch
 export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/command_classifier.pt
@@ -308,14 +320,21 @@ target environment before recording evidence.
 
 ## Verification
 
-After installing the development dependencies, run the fast fake-mode suite:
+The documentation/submission pass uses focused checks for the changed generator,
+bundle builder, and regression tests:
 
 ```bash
-COMMAND_BACKEND=fake .venv/bin/pytest -m "not rocm and not model_integration" -q
-.venv/bin/ruff check .
+.venv/bin/ruff check scripts/generate_submission_assets.py scripts/build_contest_bundle.py tests/test_submission_docs.py tests/test_contest_bundle.py
+.venv/bin/pytest tests/test_submission_docs.py tests/test_contest_bundle.py --noconftest -q
 ```
 
-The helper below runs the same class of tests and then starts the local server:
+These focused checks do not imply that the whole repository is lint-clean. A
+full `.venv/bin/ruff check .` has 24 known pre-existing findings. Runtime and
+full-suite verification were deferred and are not part of this documentation
+pass.
+
+For a separate runtime verification pass, the helper below runs the fast
+fake-mode tests and then starts the local server:
 
 ```bash
 ./scripts/smoke_fake.sh
@@ -357,7 +376,10 @@ not replace held-out classifier validation or a recorded end-to-end demo.
 
 The editable and generated submission materials are indexed in
 [`submission/README.md`](submission/README.md). Source copy lives under
-`docs/submission/`. The project profile PDF, poster PDF/PNG, Radeon demo video,
-and final GPU evidence are pending generation or recording.
+`docs/submission/` as reviewed reference copy; the generator remains the
+canonical generated-artifact copy/layout source. The generated project profile
+PDF and poster PDF/PNG are complete. The Radeon evidence, final checkpoint,
+held-out validation, Creator Mode actions, demo video, and video URL remain
+pending.
 
 Required pull request title: `Track 1, Jixin Fang, Silent Vision`.
