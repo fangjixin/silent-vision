@@ -1,4 +1,5 @@
 .worktrees/
+dist/
 .env
 .venv/
 __pycache__/
@@ -15,3 +16,4 @@ tests/media/*.mp4
 tests/media/*.mov
 tests/media/*.avi
 tests/media/manifest.local.json
+tmp/pdfs/
