@@ -43,3 +43,27 @@ def test_bundle_rejects_an_allowlisted_symlink(tmp_path):
 
     with pytest.raises(ValueError, match="symlink"):
         build_bundle(source, tmp_path / "bundle")
+
+
+def test_bundle_excludes_secrets_inside_an_allowlisted_directory(tmp_path):
+    source = tmp_path / "source"
+    secret = source / "backend" / "secrets" / "token.txt"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("do not publish", encoding="utf-8")
+
+    build_bundle(source, tmp_path / "bundle")
+
+    assert not (tmp_path / "bundle" / "backend" / "secrets" / "token.txt").exists()
+
+
+def test_bundle_rejects_a_symlink_destination(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "README.md").write_text("# Safe source\n", encoding="utf-8")
+    destination_target = tmp_path / "destination-target"
+    destination_target.mkdir()
+    destination = tmp_path / "bundle"
+    destination.symlink_to(destination_target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink destination"):
+        build_bundle(source, destination)

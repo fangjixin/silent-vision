@@ -33,7 +33,9 @@ EXCLUDED_COMPONENTS = {
     ".git",
     ".pytest_cache",
     ".ruff_cache",
+    ".superpowers",
     ".venv",
+    ".worktrees",
     "__pycache__",
     "cache",
     "caches",
@@ -42,6 +44,9 @@ EXCLUDED_COMPONENTS = {
     "datasets",
     "dist",
     "env",
+    "envs",
+    "environment",
+    "environments",
     "logs",
     "models",
     "node_modules",
@@ -49,6 +54,7 @@ EXCLUDED_COMPONENTS = {
     "playwright-report",
     "recordings",
     "reports",
+    "secrets",
     "test-results",
     "tmp",
     "venv",
@@ -138,14 +144,13 @@ def _audit_markdown(destination: Path) -> None:
 def build_bundle(source: Path, destination: Path) -> list[Path]:
     """Copy only reviewed runtime and submission files into *destination*."""
     source = source.resolve()
+    if destination.is_symlink():
+        raise ValueError(f"Contest bundle rejects symlink destination: {destination}")
     destination = destination.resolve()
     if not source.is_dir():
         raise ValueError(f"Contest bundle source is not a directory: {source}")
     if source == destination:
         raise ValueError("Contest bundle destination must differ from its source")
-    if destination.is_symlink():
-        raise ValueError(f"Contest bundle rejects symlink destination: {destination}")
-
     files = _allowed_files(source)
     if destination.exists():
         shutil.rmtree(destination)
