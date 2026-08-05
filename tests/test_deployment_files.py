@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 
 
 def test_docker_compose_mounts_persistence_root_and_rocm_devices():
@@ -120,6 +122,7 @@ def test_command_classifier_files_and_scripts_exist():
     for path in [
         "command/labels.py",
         "command/model.py",
+        "command/checkpoint.py",
         "command/inference.py",
         "scripts/train_command_classifier.py",
         "scripts/validate_command_classifier.py",
@@ -128,16 +131,21 @@ def test_command_classifier_files_and_scripts_exist():
     ]:
         assert Path(path).exists()
 
-    model_py = Path("command/model.py").read_text()
     inference_py = Path("command/inference.py").read_text()
     schemas_py = Path("backend/schemas.py").read_text()
-    assert "class CommandConformerClassifier" in model_py
-    assert "num_layers: int = 4" in model_py
-    assert "AttentivePooling" in model_py
-    assert "depthwise_conv" in model_py
     assert "top1_margin" in inference_py
     assert "CommandDecision" in schemas_py
     assert "LIGHT_ON" in Path("command/labels.py").read_text()
+
+
+def test_legacy_training_cli_help_does_not_import_removed_torch_stack():
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.train_command_classifier", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_rejected_commands_do_not_call_llm_or_execute_actions():

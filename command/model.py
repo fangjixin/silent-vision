@@ -1,117 +1,72 @@
 from __future__ import annotations
 
-
-class AttentivePooling:
-    def __init__(self, feature_dim: int) -> None:
-        import torch
-        from torch import nn
-
-        self.module = nn.Sequential(nn.Linear(feature_dim, feature_dim), nn.Tanh(), nn.Linear(feature_dim, 1))
-        self.softmax = torch.nn.Softmax(dim=1)
-
-    def __call__(self, features):
-        weights = self.softmax(self.module(features))
-        return (features * weights).sum(dim=1)
+from functools import lru_cache
+from typing import Any
 
 
-class ConformerBlock:
-    def __init__(self, feature_dim: int, num_heads: int, dropout: float) -> None:
-        from torch import nn
-
-        self.module = nn.Sequential(
-            nn.LayerNorm(feature_dim),
-            nn.TransformerEncoderLayer(
-                d_model=feature_dim,
-                nhead=num_heads,
-                dim_feedforward=feature_dim * 4,
-                dropout=dropout,
-                batch_first=True,
-                activation="gelu",
-            ),
-        )
-
-    def __call__(self, features):
-        return self.module(features)
+PARAMETER_CAP = 150_000
 
 
-def build_command_model(
-    *,
-    feature_dim: int,
-    num_classes: int,
-    num_layers: int = 4,
-    num_heads: int = 4,
-    dropout: float = 0.1,
-):
+@lru_cache(maxsize=1)
+def _fixed_phrase_model_types() -> tuple[type, type]:
     import torch
     from torch import nn
+    from torch.nn import functional as F
 
-    class _ConformerBlock(nn.Module):
-        def __init__(self) -> None:
+    class TemporalBlock(nn.Module):
+        def __init__(self, channels: int, dilation: int):
             super().__init__()
-            self.ffn1 = nn.Sequential(
-                nn.LayerNorm(feature_dim),
-                nn.Linear(feature_dim, feature_dim * 4),
+            self.net = nn.Sequential(
+                nn.Conv1d(channels, channels, 3, padding=dilation, dilation=dilation, groups=channels),
+                nn.Conv1d(channels, channels, 1),
                 nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(feature_dim * 4, feature_dim),
+                nn.BatchNorm1d(channels),
             )
-            self.self_attn_norm = nn.LayerNorm(feature_dim)
-            self.self_attn = nn.MultiheadAttention(feature_dim, num_heads, dropout=dropout, batch_first=True)
-            self.conv_norm = nn.LayerNorm(feature_dim)
-            self.depthwise_conv = nn.Conv1d(feature_dim, feature_dim, kernel_size=7, padding=3, groups=feature_dim)
-            self.pointwise_conv = nn.Conv1d(feature_dim, feature_dim, kernel_size=1)
-            self.ffn2 = nn.Sequential(
-                nn.LayerNorm(feature_dim),
-                nn.Linear(feature_dim, feature_dim * 4),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(feature_dim * 4, feature_dim),
-            )
-            self.final_norm = nn.LayerNorm(feature_dim)
 
-        def forward(self, features):
-            x = features + 0.5 * self.ffn1(features)
-            attn_input = self.self_attn_norm(x)
-            attn_output, _ = self.self_attn(attn_input, attn_input, attn_input, need_weights=False)
-            x = x + attn_output
-            conv_input = self.conv_norm(x).transpose(1, 2)
-            conv_output = self.pointwise_conv(self.depthwise_conv(conv_input)).transpose(1, 2)
-            x = x + conv_output
-            x = x + 0.5 * self.ffn2(x)
-            return self.final_norm(x)
+        def forward(self, x):
+            return x + self.net(x)
 
-    class _ConformerWrapper(nn.Module):
-        def __init__(self) -> None:
+    class FixedPhraseModel(nn.Module):
+        def __init__(self, num_classes: int, embedding_dim: int = 64):
             super().__init__()
-            self.input_norm = nn.LayerNorm(feature_dim)
-            self.layers = nn.ModuleList([_ConformerBlock() for _ in range(num_layers)])
-            self.pool_score = nn.Sequential(nn.Linear(feature_dim, feature_dim), nn.Tanh(), nn.Linear(feature_dim, 1))
-            self.classifier = nn.Linear(feature_dim, num_classes)
+            self.projection = nn.Linear(512, 64)
+            self.temporal = nn.Sequential(TemporalBlock(64, 1), TemporalBlock(64, 2))
+            self.attention = nn.Linear(64, 1)
+            self.embedding = nn.Linear(64, embedding_dim)
+            self.classifier = nn.Linear(embedding_dim, num_classes)
 
-        def forward(self, features):
-            x = self.input_norm(features)
-            for layer in self.layers:
-                x = layer(x)
-            weights = torch.softmax(self.pool_score(x), dim=1)
-            pooled = (x * weights).sum(dim=1)
-            return self.classifier(pooled)
+        def forward(self, frames):
+            if frames.ndim != 4 or tuple(frames.shape[-2:]) != (96, 96):
+                raise ValueError("frames must have shape [B, T, 96, 96]")
+            if frames.shape[0] < 1 or frames.shape[1] < 1:
+                raise ValueError("frames must have non-empty B and T dimensions in [B, T, 96, 96]")
 
-    return _ConformerWrapper()
+            x = frames.float()
+            if x.max().item() > 1.0:
+                x = x / 255.0
+            small = F.interpolate(
+                x.reshape(-1, 1, 96, 96), size=(16, 16), mode="bilinear", align_corners=False
+            ).reshape(x.shape[0], x.shape[1], 256)
+            motion = torch.zeros_like(small)
+            motion[:, 1:] = small[:, 1:] - small[:, :-1]
+            sequence = self.projection(torch.cat([small, motion], dim=-1))
+            sequence = self.temporal(sequence.transpose(1, 2)).transpose(1, 2)
+            weights = torch.softmax(self.attention(sequence), dim=1)
+            pooled = (weights * sequence).sum(dim=1)
+            embedding = F.normalize(self.embedding(pooled), dim=-1)
+            return self.classifier(embedding), embedding
+
+    return TemporalBlock, FixedPhraseModel
 
 
-class CommandConformerClassifier:
-    def __init__(self, feature_dim: int, num_classes: int, num_layers: int = 4) -> None:
-        self.feature_dim = feature_dim
-        self.num_classes = num_classes
-        self.num_layers = num_layers
-        self.model = build_command_model(feature_dim=feature_dim, num_classes=num_classes, num_layers=num_layers)
+def build_fixed_phrase_model(num_classes: int, embedding_dim: int = 64) -> Any:
+    if not isinstance(num_classes, int) or isinstance(num_classes, bool) or num_classes < 1:
+        raise ValueError("num_classes must be a positive integer")
+    if not isinstance(embedding_dim, int) or isinstance(embedding_dim, bool) or embedding_dim < 1:
+        raise ValueError("embedding_dim must be a positive integer")
+    _, fixed_phrase_model = _fixed_phrase_model_types()
+    return fixed_phrase_model(num_classes, embedding_dim)
 
-    def load_checkpoint(self, checkpoint_path: str, device: str):
-        import torch
 
-        payload = torch.load(checkpoint_path, map_location=device)
-        state_dict = payload["model"] if isinstance(payload, dict) and "model" in payload else payload
-        self.model.load_state_dict(state_dict)
-        self.model.to(device)
-        self.model.eval()
-        return self
+def count_trainable_parameters(model: Any) -> int:
+    return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)

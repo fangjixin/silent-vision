@@ -11,7 +11,6 @@ import numpy as np
 from backend.config import Settings
 from backend.schemas import CommandDecision
 from command.labels import COMMAND_LABELS, EXECUTABLE_INTENTS, CommandIntent
-from command.model import CommandConformerClassifier
 from command.prototype import extract_roi_embedding, load_profile_prototypes, match_prototypes, sanitize_profile_id
 
 logger = logging.getLogger(__name__)
@@ -121,16 +120,7 @@ class TorchCommandClassifierBackend:
         self.checkpoint = Path(settings.command_classifier_checkpoint)
         if not self.checkpoint.exists():
             raise FileNotFoundError(self.checkpoint)
-        import torch
-
-        self.torch = torch
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.classifier = CommandConformerClassifier(
-            feature_dim=settings.command_feature_dim,
-            num_classes=len(COMMAND_LABELS),
-            num_layers=4,
-        ).load_checkpoint(str(self.checkpoint), str(self.device))
-        logger.info("command classifier loaded checkpoint=%s device=%s", self.checkpoint, self.device)
+        raise RuntimeError("the legacy intent-only Torch runtime was removed; fixed-phrase runtime migration required")
 
     def predict(self, mouth_frames: np.ndarray, metadata: dict[str, object]) -> CommandDecision:
         started = perf_counter()
