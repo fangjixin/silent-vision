@@ -124,7 +124,7 @@ def test_command_classifier_files_and_scripts_exist():
         "scripts/train_command_classifier.py",
         "scripts/validate_command_classifier.py",
         "scripts/infer_command_clip.py",
-        "scripts/record_command_manifest.py",
+            "scripts/build_command_manifest.py",
     ]:
         assert Path(path).exists()
 
