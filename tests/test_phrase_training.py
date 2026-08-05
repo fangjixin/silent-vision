@@ -12,11 +12,83 @@ import pytest
 
 from command.training import (
     CalibrationRecord,
+    ManifestDataset,
+    _validate_manifest_hashes,
     calibrate_thresholds,
     compute_class_centroids,
     require_rocm,
     train_phrase_classifier,
 )
+
+
+def _write_manifest_file(path: Path, content: str) -> str:
+    path.write_text(content, encoding="utf-8")
+    return sha256(path.read_bytes()).hexdigest()
+
+
+def test_manifest_hashes_are_bound_to_semantic_roles(tmp_path):
+    train = tmp_path / "train.jsonl"
+    known = tmp_path / "calibration-known.jsonl"
+    unknown = tmp_path / "calibration-unknown.jsonl"
+    inventory = {
+        "manifestSha256": {
+            "train.jsonl": _write_manifest_file(train, "train\n"),
+            "calibration-known.jsonl": _write_manifest_file(known, "known\n"),
+            "calibration-unknown.jsonl": _write_manifest_file(unknown, "unknown\n"),
+        }
+    }
+
+    with pytest.raises(ValueError, match="train.jsonl"):
+        _validate_manifest_hashes(inventory, (known, train, unknown))
+
+
+def test_evaluation_manifest_cannot_be_used_for_calibration(tmp_path):
+    train = tmp_path / "train.jsonl"
+    known = tmp_path / "calibration-known.jsonl"
+    unknown = tmp_path / "calibration-unknown.jsonl"
+    evaluation = tmp_path / "evaluation-known.jsonl"
+    inventory = {
+        "manifestSha256": {
+            "train.jsonl": _write_manifest_file(train, "train\n"),
+            "calibration-known.jsonl": _write_manifest_file(known, "same bytes\n"),
+            "calibration-unknown.jsonl": _write_manifest_file(unknown, "unknown\n"),
+            "evaluation-known.jsonl": _write_manifest_file(evaluation, "same bytes\n"),
+        }
+    }
+
+    with pytest.raises(ValueError, match="calibration-known.jsonl"):
+        _validate_manifest_hashes(inventory, (train, evaluation, unknown))
+
+
+def test_manifest_dataset_rejects_npy_modified_after_manifest_creation(tmp_path):
+    clip = tmp_path / "clip.npy"
+    np.save(clip, np.full((2, 96, 96), 1, dtype=np.uint8))
+    original_digest = sha256(clip.read_bytes()).hexdigest()
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text(
+        json.dumps(
+            {"phrase_id": "a", "mouth_roi_npy": str(clip), "sha256": original_digest}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    np.save(clip, np.full((2, 96, 96), 2, dtype=np.uint8))
+
+    with pytest.raises(ValueError, match="mouth ROI SHA-256"):
+        ManifestDataset(manifest, {"a": 0})
+
+
+def test_manifest_dataset_requires_per_sample_sha256(tmp_path):
+    clip = tmp_path / "clip.npy"
+    np.save(clip, np.full((2, 96, 96), 1, dtype=np.uint8))
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text(
+        json.dumps({"phrase_id": "a", "mouth_roi_npy": str(clip)}) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="requires sha256"):
+        ManifestDataset(manifest, {"a": 0})
 
 
 def test_calibration_uses_known_radius_and_limits_unknown_false_accepts():
@@ -166,7 +238,7 @@ def test_centroids_reject_a_class_without_training_embeddings():
 
 def test_manifest_dataset_loads_only_listed_npy_and_repeats_final_frame(tmp_path):
     torch = pytest.importorskip("torch")
-    from command.training import ManifestDataset, pad_clip_batch
+    from command.training import pad_clip_batch
 
     first = tmp_path / "first.npy"
     second = tmp_path / "second.npy"
@@ -178,8 +250,20 @@ def test_manifest_dataset_loads_only_listed_npy_and_repeats_final_frame(tmp_path
     manifest.write_text(
         "\n".join(
             [
-                json.dumps({"phrase_id": "a", "mouth_roi_npy": str(first)}),
-                json.dumps({"phrase_id": "b", "mouth_roi_npy": str(second)}),
+                json.dumps(
+                    {
+                        "phrase_id": "a",
+                        "mouth_roi_npy": str(first),
+                        "sha256": sha256(first.read_bytes()).hexdigest(),
+                    }
+                ),
+                json.dumps(
+                    {
+                        "phrase_id": "b",
+                        "mouth_roi_npy": str(second),
+                        "sha256": sha256(second.read_bytes()).hexdigest(),
+                    }
+                ),
             ]
         )
         + "\n",
@@ -230,9 +314,19 @@ def test_rocm_training_writes_checkpoint_and_external_run_summary(tmp_path):
         calibration_clip = tmp_path / f"calibration-{index}.npy"
         np.save(train_clip, np.full((3, 96, 96), 20 + index * 100, dtype=np.uint8))
         np.save(calibration_clip, np.full((3, 96, 96), 30 + index * 100, dtype=np.uint8))
-        train_records.append({"phrase_id": entry.phrase_id, "mouth_roi_npy": str(train_clip)})
+        train_records.append(
+            {
+                "phrase_id": entry.phrase_id,
+                "mouth_roi_npy": str(train_clip),
+                "sha256": sha256(train_clip.read_bytes()).hexdigest(),
+            }
+        )
         calibration_records.append(
-            {"phrase_id": entry.phrase_id, "mouth_roi_npy": str(calibration_clip)}
+            {
+                "phrase_id": entry.phrase_id,
+                "mouth_roi_npy": str(calibration_clip),
+                "sha256": sha256(calibration_clip.read_bytes()).hexdigest(),
+            }
         )
     manifests["train.jsonl"].write_text(
         "".join(json.dumps(record) + "\n" for record in train_records), encoding="utf-8"

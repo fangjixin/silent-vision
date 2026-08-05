@@ -143,6 +143,8 @@ class ManifestDataset:
         generator=None,
     ):
         self.records = _read_manifest(Path(manifest_path))
+        for record in self.records:
+            _validate_sample_sha256(record)
         self.phrase_index = dict(phrase_index)
         self.augment = augment
         self.generator = generator
@@ -459,13 +461,34 @@ def _validate_manifest_hashes(
     expected_hashes = inventory.get("manifestSha256")
     if not isinstance(expected_hashes, dict):
         raise ValueError("inventory manifestSha256 must be an object")
+    manifest_roles = ("train.jsonl", "calibration-known.jsonl", "calibration-unknown.jsonl")
+    if len(manifest_paths) != len(manifest_roles):
+        raise ValueError("exactly three training/calibration manifest paths are required")
     actual_hashes: dict[str, str] = {}
-    for path in manifest_paths:
+    for role, path in zip(manifest_roles, manifest_paths):
+        if path.name != role:
+            raise ValueError(f"{role} argument must reference a file named {role}, got {path.name}")
         digest = _sha256_file(path)
-        if expected_hashes.get(path.name) != digest:
-            raise ValueError(f"manifest SHA-256 does not match inventory: {path.name}")
-        actual_hashes[path.name] = digest
+        if expected_hashes.get(role) != digest:
+            raise ValueError(f"manifest SHA-256 does not match inventory role: {role}")
+        actual_hashes[role] = digest
     return actual_hashes
+
+
+def _validate_sample_sha256(record: dict[str, Any]) -> None:
+    path_value = record.get("mouth_roi_npy")
+    if not isinstance(path_value, str) or not path_value:
+        raise ValueError("manifest record requires mouth_roi_npy")
+    expected_digest = record.get("sha256")
+    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+        raise ValueError("manifest record requires sha256")
+    try:
+        int(expected_digest, 16)
+    except ValueError as exc:
+        raise ValueError("manifest record requires sha256 as 64 hexadecimal characters") from exc
+    actual_digest = _sha256_file(Path(path_value))
+    if actual_digest != expected_digest.lower():
+        raise ValueError(f"mouth ROI SHA-256 does not match manifest: {path_value}")
 
 
 def _seed_everything(torch, seed: int) -> None:
