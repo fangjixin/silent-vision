@@ -74,6 +74,8 @@ def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhras
     catalog_records = payload["phraseCatalog"]
     if not isinstance(catalog_records, list):
         raise ValueError("phraseCatalog must be a list")
+    if any(record.get("enabled", True) and record.get("intent") == "UNKNOWN" for record in catalog_records):
+        raise ValueError("checkpoint phraseCatalog cannot train UNKNOWN")
     catalog = PhraseCatalog.from_records(catalog_records)
     catalog_phrase_ids = tuple(entry.phrase_id for entry in catalog.entries)
     if phrase_ids != catalog_phrase_ids:

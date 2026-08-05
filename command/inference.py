@@ -112,43 +112,6 @@ class FakeCommandClassifierBackend:
         )
 
 
-class TorchCommandClassifierBackend:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        if settings.command_classifier_checkpoint is None:
-            raise FileNotFoundError("COMMAND_CLASSIFIER_CHECKPOINT is required when COMMAND_BACKEND=torch")
-        self.checkpoint = Path(settings.command_classifier_checkpoint)
-        if not self.checkpoint.exists():
-            raise FileNotFoundError(self.checkpoint)
-        raise RuntimeError("the legacy intent-only Torch runtime was removed; fixed-phrase runtime migration required")
-
-    def predict(self, mouth_frames: np.ndarray, metadata: dict[str, object]) -> CommandDecision:
-        started = perf_counter()
-        features = _simple_visual_features(mouth_frames, self.settings.command_feature_dim)
-        with self.torch.no_grad():
-            tensor = self.torch.tensor(features, dtype=self.torch.float32, device=self.device).unsqueeze(0)
-            logits_tensor = self.classifier.model(tensor).squeeze(0)
-            probs = self.torch.softmax(logits_tensor, dim=0).detach().cpu().numpy()
-        order = probs.argsort()[::-1]
-        best_idx = int(order[0])
-        second_idx = int(order[1]) if len(order) > 1 else best_idx
-        top_k = [
-            {"intent": COMMAND_LABELS[int(index)].value, "confidence": float(probs[int(index)])}
-            for index in order[:3]
-        ]
-        metadata = metadata | {"latencyMs": int((perf_counter() - started) * 1000)}
-        return reject_by_thresholds(
-            intent=COMMAND_LABELS[best_idx],
-            confidence=float(probs[best_idx]),
-            second_confidence=float(probs[second_idx]),
-            threshold=self.settings.command_confidence_threshold,
-            top1_margin=self.settings.command_top1_margin,
-            logits=[float(value) for value in logits_tensor.detach().cpu().tolist()],
-            top_k=top_k,
-            metadata=metadata,
-        )
-
-
 class PrototypeCommandClassifierBackend:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -227,19 +190,6 @@ class PrototypeCommandClassifierBackend:
         )
 
 
-def _simple_visual_features(mouth_frames: np.ndarray, feature_dim: int) -> np.ndarray:
-    frames = mouth_frames.astype("float32") / 255.0
-    flat = frames.reshape(frames.shape[0], -1)
-    mean = flat.mean(axis=1, keepdims=True)
-    std = flat.std(axis=1, keepdims=True)
-    diff = np.zeros_like(mean)
-    if len(flat) > 1:
-        diff[1:] = np.abs(flat[1:] - flat[:-1]).mean(axis=1, keepdims=True)
-    base = np.concatenate([mean, std, diff], axis=1)
-    repeats = int(np.ceil(feature_dim / base.shape[1]))
-    return np.tile(base, (1, repeats))[:, :feature_dim]
-
-
 def _clean_metadata_string(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
@@ -258,8 +208,6 @@ def save_command_debug(settings: Settings, session_id: str, decision: CommandDec
 
 
 def build_command_classifier(settings: Settings) -> CommandClassifierBackend:
-    if settings.command_backend == "torch":
-        return TorchCommandClassifierBackend(settings)
     if settings.command_backend == "prototype":
         return PrototypeCommandClassifierBackend(settings)
     return FakeCommandClassifierBackend(settings)

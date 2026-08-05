@@ -1,4 +1,6 @@
 import numpy as np
+import pytest
+from pydantic import ValidationError
 
 from agent.agent import AgentPolicy
 from backend.config import Settings
@@ -88,6 +90,11 @@ def test_builds_prototype_backend(tmp_path, monkeypatch):
     backend = build_command_classifier(Settings())
 
     assert backend.__class__.__name__ == "PrototypeCommandClassifierBackend"
+
+
+def test_removed_legacy_torch_backend_is_rejected_by_settings(tmp_path):
+    with pytest.raises(ValidationError, match="command_backend"):
+        Settings(persistence_root=tmp_path, command_backend="torch")
 
 
 def test_prototype_backend_returns_matched_display_text_and_language(tmp_path, monkeypatch):

@@ -40,6 +40,8 @@ class PhraseCatalog:
                 intent = CommandIntent(str(record["intent"]))
             except (KeyError, ValueError) as exc:
                 raise ValueError(f"unknown intent: {record.get('intent')}") from exc
+            if intent is CommandIntent.UNKNOWN:
+                raise ValueError("UNKNOWN cannot be an enabled phrase class")
             normalized = normalize_phrase(text)
             if phrase_id in ids:
                 raise ValueError(f"duplicate phraseId: {phrase_id}")

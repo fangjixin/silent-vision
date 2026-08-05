@@ -23,6 +23,7 @@ def test_normalization_preserves_punctuation():
         ([{"phraseId": "x", "text": "a", "language": "zh", "intent": "LIGHT_ON", "enabled": True},
           {"phraseId": "x", "text": "b", "language": "zh", "intent": "LIGHT_OFF", "enabled": True}], "duplicate phraseId"),
         ([{"phraseId": "x", "text": "a", "language": "zh", "intent": "NOT_REAL", "enabled": True}], "unknown intent"),
+        ([{"phraseId": "x", "text": "a", "language": "zh", "intent": "UNKNOWN", "enabled": True}], "UNKNOWN"),
     ],
 )
 def test_invalid_catalog_is_rejected(records, message):

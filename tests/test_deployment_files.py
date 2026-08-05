@@ -1,6 +1,4 @@
 from pathlib import Path
-import subprocess
-import sys
 
 
 def test_docker_compose_mounts_persistence_root_and_rocm_devices():
@@ -46,7 +44,6 @@ def test_smoke_scripts_exist_and_are_executable():
         assert removed not in setup.read_text()
         assert removed not in start.read_text()
     assert "check_no_removed_dependencies" in setup.read_text()
-    assert "COMMAND_CLASSIFIER_CHECKPOINT" in start.read_text()
 
 
 def test_frontend_stream_lifecycle_cleans_up_between_starts():
@@ -124,10 +121,7 @@ def test_command_classifier_files_and_scripts_exist():
         "command/model.py",
         "command/checkpoint.py",
         "command/inference.py",
-        "scripts/train_command_classifier.py",
-        "scripts/validate_command_classifier.py",
-        "scripts/infer_command_clip.py",
-            "scripts/build_command_manifest.py",
+        "scripts/build_command_manifest.py",
     ]:
         assert Path(path).exists()
 
@@ -138,14 +132,10 @@ def test_command_classifier_files_and_scripts_exist():
     assert "LIGHT_ON" in Path("command/labels.py").read_text()
 
 
-def test_legacy_training_cli_help_does_not_import_removed_torch_stack():
-    result = subprocess.run(
-        [sys.executable, "-m", "scripts.train_command_classifier", "--help"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
+def test_obsolete_torch_entrypoints_are_not_shipped():
+    assert not Path("scripts/train_command_classifier.py").exists()
+    assert not Path("scripts/validate_command_classifier.py").exists()
+    assert not Path("scripts/infer_command_clip.py").exists()
 
 
 def test_rejected_commands_do_not_call_llm_or_execute_actions():

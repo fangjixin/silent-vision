@@ -54,6 +54,13 @@ def test_checkpoint_phrase_ids_must_match_enabled_catalog_order():
         validate_phrase_checkpoint_schema(payload)
 
 
+def test_checkpoint_rejects_unknown_as_a_trained_phrase_class():
+    payload = metadata_payload()
+    payload["phraseCatalog"][0]["intent"] = "UNKNOWN"
+    with pytest.raises(ValueError, match="UNKNOWN"):
+        validate_phrase_checkpoint_schema(payload)
+
+
 def test_checkpoint_thresholds_must_be_finite():
     payload = metadata_payload()
     payload["decisionThresholds"]["minProbability"] = math.nan

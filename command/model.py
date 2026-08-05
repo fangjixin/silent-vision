@@ -64,6 +64,9 @@ def build_fixed_phrase_model(num_classes: int, embedding_dim: int = 64) -> Any:
         raise ValueError("num_classes must be a positive integer")
     if not isinstance(embedding_dim, int) or isinstance(embedding_dim, bool) or embedding_dim < 1:
         raise ValueError("embedding_dim must be a positive integer")
+    parameter_count = 41_985 + (65 * embedding_dim) + (num_classes * (embedding_dim + 1))
+    if parameter_count >= PARAMETER_CAP:
+        raise ValueError(f"model would have {parameter_count} trainable parameters, violating parameter cap {PARAMETER_CAP}")
     _, fixed_phrase_model = _fixed_phrase_model_types()
     return fixed_phrase_model(num_classes, embedding_dim)
 
