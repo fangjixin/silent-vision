@@ -132,8 +132,8 @@ def test_command_classifier_files_and_scripts_exist():
     assert "LIGHT_ON" in Path("command/labels.py").read_text()
 
 
-def test_obsolete_torch_entrypoints_are_not_shipped():
-    assert not Path("scripts/train_command_classifier.py").exists()
+def test_fixed_phrase_trainer_replaces_obsolete_torch_entrypoints():
+    assert Path("scripts/train_command_classifier.py").exists()
     assert not Path("scripts/validate_command_classifier.py").exists()
     assert not Path("scripts/infer_command_clip.py").exists()
 
