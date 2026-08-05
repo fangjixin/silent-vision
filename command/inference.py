@@ -2,23 +2,89 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+from dataclasses import dataclass
+from numbers import Real
 from pathlib import Path
 from time import perf_counter
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
 from backend.config import Settings
 from backend.schemas import CommandDecision
 from command.labels import COMMAND_LABELS, EXECUTABLE_INTENTS, CommandIntent
-from command.prototype import extract_roi_embedding, load_profile_prototypes, match_prototypes, sanitize_profile_id
+from command.prototype import (
+    extract_roi_embedding,
+    load_profile_prototypes,
+    match_prototypes,
+    sanitize_profile_id,
+)
+from command.training import require_rocm
 
 logger = logging.getLogger(__name__)
 
 
 class CommandClassifierBackend(Protocol):
-    def predict(self, mouth_frames: np.ndarray, metadata: dict[str, object]) -> CommandDecision:
+    def predict(
+        self, mouth_frames: np.ndarray, metadata: dict[str, object]
+    ) -> CommandDecision:
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class ThresholdResolution:
+    min_probability: float
+    max_cosine_distance: dict[str, float]
+    source: str
+
+
+def resolve_thresholds(
+    checkpoint_thresholds: dict[str, Any],
+    probability_override: float | None,
+    distance_override: float | None,
+) -> ThresholdResolution:
+    minimum_probability = float(checkpoint_thresholds["minProbability"])
+    maximum_distances = {
+        str(phrase_id): float(distance)
+        for phrase_id, distance in checkpoint_thresholds["maxCosineDistance"].items()
+    }
+    override_names: list[str] = []
+    if probability_override is not None:
+        minimum_probability = _unit_interval_override(
+            probability_override, "probability"
+        )
+        override_names.append("probability")
+    if distance_override is not None:
+        distance = _unit_interval_override(distance_override, "distance")
+        maximum_distances = {phrase_id: distance for phrase_id in maximum_distances}
+        override_names.append("distance")
+    source = (
+        "checkpoint" if not override_names else f"override:{','.join(override_names)}"
+    )
+    return ThresholdResolution(minimum_probability, maximum_distances, source)
+
+
+def evaluate_phrase_rejection(
+    probability: float,
+    distance: float,
+    predicted_phrase_id: str,
+    thresholds: ThresholdResolution,
+) -> tuple[bool, str | None]:
+    if probability < thresholds.min_probability:
+        return False, "low_probability"
+    if distance > thresholds.max_cosine_distance[predicted_phrase_id]:
+        return False, "embedding_distance"
+    return True, None
+
+
+def _unit_interval_override(value: float, name: str) -> float:
+    if not isinstance(value, Real) or isinstance(value, bool):
+        raise TypeError(f"{name} override must be numeric")
+    normalized = float(value)
+    if not math.isfinite(normalized) or not 0.0 <= normalized <= 1.0:
+        raise ValueError(f"{name} override must be between 0 and 1")
+    return normalized
 
 
 def reject_by_thresholds(
@@ -78,7 +144,9 @@ def reject_by_thresholds(
         margin=margin,
         topK=top_k or [],
         logits=logits,
-        reason="accepted executable intent" if executable else "accepted non-executable intent",
+        reason="accepted executable intent"
+        if executable
+        else "accepted non-executable intent",
         metadata=metadata or {},
     )
 
@@ -87,8 +155,14 @@ class FakeCommandClassifierBackend:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def predict(self, mouth_frames: np.ndarray, metadata: dict[str, object]) -> CommandDecision:
-        motion = float(np.abs(np.diff(mouth_frames.astype("float32"), axis=0)).mean()) if len(mouth_frames) > 1 else 0.0
+    def predict(
+        self, mouth_frames: np.ndarray, metadata: dict[str, object]
+    ) -> CommandDecision:
+        motion = (
+            float(np.abs(np.diff(mouth_frames.astype("float32"), axis=0)).mean())
+            if len(mouth_frames) > 1
+            else 0.0
+        )
         if motion > 1.0:
             intent = CommandIntent.LIGHT_ON
             confidence = 0.91
@@ -112,14 +186,156 @@ class FakeCommandClassifierBackend:
         )
 
 
+class TorchCommandClassifierBackend:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        if settings.command_classifier_checkpoint is None:
+            raise FileNotFoundError(
+                "COMMAND_CLASSIFIER_CHECKPOINT is required when COMMAND_BACKEND=torch"
+            )
+        self.checkpoint = Path(settings.command_classifier_checkpoint)
+        if not self.checkpoint.exists():
+            raise FileNotFoundError(self.checkpoint)
+
+        import torch
+
+        from command.checkpoint import load_phrase_checkpoint
+
+        self.torch = torch
+        self.device = require_rocm(torch)
+        self.loaded_checkpoint = load_phrase_checkpoint(self.checkpoint, self.device)
+        self.thresholds = resolve_thresholds(
+            self.loaded_checkpoint.decision_thresholds,
+            probability_override=settings.command_phrase_probability_override,
+            distance_override=settings.command_phrase_distance_override,
+        )
+        self.catalog_by_phrase_id = {
+            entry.phrase_id: entry for entry in self.loaded_checkpoint.catalog.entries
+        }
+        self.centroids = torch.as_tensor(
+            self.loaded_checkpoint.centroids,
+            device=self.device,
+            dtype=torch.float32,
+        )
+
+    def predict(
+        self, mouth_frames: np.ndarray, metadata: dict[str, object]
+    ) -> CommandDecision:
+        started = perf_counter()
+        frames = np.asarray(mouth_frames)
+        tensor = self.torch.from_numpy(frames).unsqueeze(0).to(self.device)
+        with self.torch.inference_mode():
+            logits_tensor, embedding = self.loaded_checkpoint.model(tensor)
+            logits_tensor = logits_tensor.squeeze(0)
+            probabilities = self.torch.softmax(logits_tensor, dim=0)
+            ordered_indices = self.torch.argsort(probabilities, descending=True)
+
+        best_index = int(ordered_indices[0].item())
+        best_probability = float(probabilities[best_index].item())
+        second_probability = (
+            float(probabilities[int(ordered_indices[1].item())].item())
+            if ordered_indices.numel() > 1
+            else 0.0
+        )
+        predicted_phrase_id = self.loaded_checkpoint.phrase_ids[best_index]
+        predicted_entry = self.catalog_by_phrase_id[predicted_phrase_id]
+        similarity = self.torch.nn.functional.cosine_similarity(
+            embedding.squeeze(0), self.centroids[best_index], dim=0
+        ).clamp(-1.0, 1.0)
+        distance = min(2.0, max(0.0, 1.0 - float(similarity.item())))
+        accepted, rejection_reason = evaluate_phrase_rejection(
+            best_probability,
+            distance,
+            predicted_phrase_id,
+            self.thresholds,
+        )
+        margin = round(max(0.0, best_probability - second_probability), 6)
+        top_k = [
+            self._top_k_item(
+                int(index.item()), float(probabilities[int(index.item())].item())
+            )
+            for index in ordered_indices[:3]
+        ]
+        result_metadata = dict(metadata)
+        for reserved_key in ("phraseId", "matchedPhrase", "displayText", "language"):
+            result_metadata.pop(reserved_key, None)
+        result_metadata.update(
+            {
+                "backend": "torch",
+                "latencyMs": int((perf_counter() - started) * 1000),
+                "predictedPhraseId": predicted_phrase_id,
+                "probability": best_probability,
+                "openSetDistance": distance,
+                "thresholdSource": self.thresholds.source,
+                "minProbabilityThreshold": self.thresholds.min_probability,
+                "maxCosineDistanceThreshold": self.thresholds.max_cosine_distance[
+                    predicted_phrase_id
+                ],
+            }
+        )
+        if not accepted:
+            result_metadata["rejectionReason"] = rejection_reason
+            return CommandDecision(
+                intent=CommandIntent.UNKNOWN,
+                accepted=False,
+                executable=False,
+                confidence=best_probability,
+                margin=margin,
+                topK=top_k,
+                logits=[
+                    float(value) for value in logits_tensor.detach().cpu().tolist()
+                ],
+                reason=rejection_reason or "rejected",
+                metadata=result_metadata,
+            )
+
+        result_metadata.update(
+            {
+                "phraseId": predicted_entry.phrase_id,
+                "matchedPhrase": predicted_entry.text,
+                "displayText": predicted_entry.text,
+                "language": predicted_entry.language,
+            }
+        )
+        executable = predicted_entry.intent in EXECUTABLE_INTENTS
+        return CommandDecision(
+            intent=predicted_entry.intent,
+            accepted=True,
+            executable=executable,
+            confidence=best_probability,
+            margin=margin,
+            topK=top_k,
+            logits=[float(value) for value in logits_tensor.detach().cpu().tolist()],
+            reason="accepted executable intent"
+            if executable
+            else "accepted non-executable intent",
+            metadata=result_metadata,
+        )
+
+    def _top_k_item(self, index: int, confidence: float) -> dict[str, object]:
+        phrase_id = self.loaded_checkpoint.phrase_ids[index]
+        entry = self.catalog_by_phrase_id[phrase_id]
+        return {
+            "phraseId": entry.phrase_id,
+            "text": entry.text,
+            "language": entry.language,
+            "intent": entry.intent.value,
+            "confidence": confidence,
+        }
+
+
 class PrototypeCommandClassifierBackend:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.root = settings.persistence_root
 
-    def predict(self, mouth_frames: np.ndarray, metadata: dict[str, object]) -> CommandDecision:
+    def predict(
+        self, mouth_frames: np.ndarray, metadata: dict[str, object]
+    ) -> CommandDecision:
         started = perf_counter()
-        embedding = extract_roi_embedding(mouth_frames, feature_dim=self.settings.prototype_feature_dim)
+        embedding = extract_roi_embedding(
+            mouth_frames, feature_dim=self.settings.prototype_feature_dim
+        )
         profile_id = "global"
         scopes: list[tuple[str, str | None]] = [("global", "global")]
 
@@ -199,8 +415,12 @@ def _clean_language(value: object) -> str | None:
     return language if language in {"zh", "en"} else None
 
 
-def save_command_debug(settings: Settings, session_id: str, decision: CommandDecision) -> Path:
-    output_dir = settings.debug_window_dir or settings.persistence_root / "logs" / "command-runs"
+def save_command_debug(
+    settings: Settings, session_id: str, decision: CommandDecision
+) -> Path:
+    output_dir = (
+        settings.debug_window_dir or settings.persistence_root / "logs" / "command-runs"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{session_id}-command-metadata.json"
     path.write_text(json.dumps(decision.model_dump(), ensure_ascii=False, indent=2))
@@ -208,6 +428,8 @@ def save_command_debug(settings: Settings, session_id: str, decision: CommandDec
 
 
 def build_command_classifier(settings: Settings) -> CommandClassifierBackend:
+    if settings.command_backend == "torch":
+        return TorchCommandClassifierBackend(settings)
     if settings.command_backend == "prototype":
         return PrototypeCommandClassifierBackend(settings)
     return FakeCommandClassifierBackend(settings)

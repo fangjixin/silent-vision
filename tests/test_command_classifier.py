@@ -92,12 +92,40 @@ def test_builds_prototype_backend(tmp_path, monkeypatch):
     assert backend.__class__.__name__ == "PrototypeCommandClassifierBackend"
 
 
-def test_removed_legacy_torch_backend_is_rejected_by_settings(tmp_path):
-    with pytest.raises(ValidationError, match="command_backend"):
-        Settings(persistence_root=tmp_path, command_backend="torch")
+def test_settings_support_only_new_checkpoint_driven_torch_backend(tmp_path):
+    checkpoint = tmp_path / "fixed-phrase.pt"
+
+    settings = Settings(
+        persistence_root=tmp_path,
+        command_backend="torch",
+        command_classifier_checkpoint=checkpoint,
+        command_phrase_probability_override=0.90,
+        command_phrase_distance_override=0.10,
+    )
+
+    assert settings.command_backend == "torch"
+    assert settings.command_classifier_checkpoint == checkpoint
+    assert settings.command_phrase_probability_override == 0.90
+    assert settings.command_phrase_distance_override == 0.10
 
 
-def test_prototype_backend_returns_matched_display_text_and_language(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("command_phrase_probability_override", -0.01),
+        ("command_phrase_probability_override", 1.01),
+        ("command_phrase_distance_override", -0.01),
+        ("command_phrase_distance_override", 1.01),
+    ],
+)
+def test_settings_reject_out_of_range_torch_threshold_overrides(field, value):
+    with pytest.raises(ValidationError, match=field):
+        Settings(**{field: value})
+
+
+def test_prototype_backend_returns_matched_display_text_and_language(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("PERSISTENCE_ROOT", str(tmp_path))
     monkeypatch.setenv("COMMAND_BACKEND", "prototype")
 
@@ -121,7 +149,9 @@ def test_prototype_backend_returns_matched_display_text_and_language(tmp_path, m
     assert decision.metadata["matchedPhrase"] == "你好，请帮我打开灯"
 
 
-def test_prototype_backend_uses_global_samples_even_when_profile_id_is_present(tmp_path, monkeypatch):
+def test_prototype_backend_uses_global_samples_even_when_profile_id_is_present(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("PERSISTENCE_ROOT", str(tmp_path))
     monkeypatch.setenv("COMMAND_BACKEND", "prototype")
 
