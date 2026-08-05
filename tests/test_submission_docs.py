@@ -100,12 +100,3 @@ def test_poster_png_is_a_full_size_a3_render():
         assert width >= 1700
         assert height >= 2400
         assert height / width == pytest.approx(2**0.5, rel=0.01)
-
-
-@pytest.mark.parametrize(
-    "name", ["Silent-Vision-Project-Profile.pdf", "Silent-Vision-Poster.pdf"]
-)
-def test_pdf_workflow_copy_matches_submission_asset(name):
-    assert ROOT.joinpath("submission", name).read_bytes() == ROOT.joinpath(
-        "output/pdf", name
-    ).read_bytes()

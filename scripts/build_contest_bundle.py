@@ -128,7 +128,7 @@ def _allowed_files(source: Path) -> list[Path]:
         ):
             files.append(candidate)
 
-    directories = [*ALLOWED_DIRECTORIES, "docs/submission"]
+    directories = [*ALLOWED_DIRECTORIES, "docs/runbooks", "docs/submission"]
     for name in directories:
         directory = source / name
         if directory.is_symlink():

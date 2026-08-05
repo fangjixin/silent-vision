@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -6,6 +7,25 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.build_contest_bundle import build_bundle
+
+MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+
+
+def _public_markdown_files(bundle: Path) -> list[Path]:
+    files = [bundle / "README.md"]
+    files.extend(sorted(bundle.joinpath("docs").rglob("*.md")))
+    files.extend(sorted(bundle.joinpath("submission").rglob("*.md")))
+    return files
+
+
+def _repository_relative_link_targets(markdown: Path) -> list[Path]:
+    targets: list[Path] = []
+    for raw_target in MARKDOWN_LINK.findall(markdown.read_text(encoding="utf-8")):
+        target = raw_target.strip("<>").split("#", maxsplit=1)[0]
+        if not target or "://" in target or target.startswith("mailto:"):
+            continue
+        targets.append((markdown.parent / target).resolve())
+    return targets
 
 
 def test_bundle_contains_complete_runtime_and_public_materials(tmp_path):
@@ -17,6 +37,7 @@ def test_bundle_contains_complete_runtime_and_public_materials(tmp_path):
     assert target.joinpath("command/phrase_catalog.json").exists()
     assert target.joinpath("frontend/websocket.js").exists()
     assert target.joinpath("README.md").exists()
+    assert target.joinpath("docs/runbooks/amd-real-mode.md").exists()
     assert target.joinpath("docs/submission/project-profile-source.md").exists()
     assert target.joinpath("scripts/generate_submission_assets.py").exists()
     assert target.joinpath("submission/Silent-Vision-Project-Profile.pdf").exists()
@@ -24,6 +45,28 @@ def test_bundle_contains_complete_runtime_and_public_materials(tmp_path):
     assert target.joinpath("submission/Silent-Vision-Poster.png").exists()
     assert target.joinpath("submission/demo-video-script.md").exists()
     assert copied
+
+
+def test_bundle_public_markdown_links_resolve_inside_bundle(tmp_path):
+    target = tmp_path / "submissions" / "track1-silent-vision"
+
+    build_bundle(Path.cwd(), target)
+
+    bundle_root = target.resolve()
+    broken: list[str] = []
+    escaped: list[str] = []
+    for markdown in _public_markdown_files(target):
+        for link_target in _repository_relative_link_targets(markdown):
+            try:
+                link_target.relative_to(bundle_root)
+            except ValueError:
+                escaped.append(f"{markdown.relative_to(target)} -> {link_target}")
+                continue
+            if not link_target.exists():
+                broken.append(f"{markdown.relative_to(target)} -> {link_target}")
+
+    assert not escaped
+    assert not broken
 
 
 def test_bundle_excludes_internal_and_sensitive_paths(tmp_path):
