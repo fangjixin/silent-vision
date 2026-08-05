@@ -96,12 +96,40 @@ def test_inventory_includes_per_phrase_counts_and_split_membership(tmp_path):
     assert recorded_ids == {"light-0", "light-1", "light-2"}
 
 
-def test_manifest_cli_runs_by_filename():
+def test_manifest_cli_builds_small_dataset_artifacts(tmp_path):
+    save_sample(tmp_path, "light", "你好，请帮我打开灯", "LIGHT_ON", 1)
+    save_sample(tmp_path, "unknown", "今天天气不错", "UNKNOWN", 2)
+    project_root = Path(__file__).resolve().parents[1]
+    output_dir = tmp_path / "artifacts"
     result = subprocess.run(
-        [sys.executable, "scripts/build_command_manifest.py", "--help"],
+        [
+            sys.executable,
+            str(project_root / "scripts" / "build_command_manifest.py"),
+            "--profile-root",
+            str(tmp_path),
+            "--catalog",
+            str(project_root / "command" / "phrase_catalog.json"),
+            "--output-dir",
+            str(output_dir),
+            "--seed",
+            "29",
+            "--allow-small-dataset",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0
-    assert "--profile-root" in result.stdout
+    for filename in (
+        "train.jsonl",
+        "calibration-known.jsonl",
+        "evaluation-known.jsonl",
+        "calibration-unknown.jsonl",
+        "evaluation-unknown.jsonl",
+        "inventory.json",
+    ):
+        assert (output_dir / filename).is_file()
+    inventory = json.loads((output_dir / "inventory.json").read_text(encoding="utf-8"))
+    assert inventory["evidentiary"] is False
+    assert inventory["seed"] == 29
+    assert json.loads(result.stdout)["evidentiary"] is False
