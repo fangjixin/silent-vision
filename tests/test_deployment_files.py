@@ -132,10 +132,10 @@ def test_command_classifier_files_and_scripts_exist():
     assert "LIGHT_ON" in Path("command/labels.py").read_text()
 
 
-def test_fixed_phrase_trainer_replaces_obsolete_torch_entrypoints():
+def test_fixed_phrase_torch_entrypoints_exist():
     assert Path("scripts/train_command_classifier.py").exists()
-    assert not Path("scripts/validate_command_classifier.py").exists()
-    assert not Path("scripts/infer_command_clip.py").exists()
+    assert Path("scripts/validate_command_classifier.py").exists()
+    assert Path("scripts/infer_command_clip.py").exists()
 
 
 def test_rejected_commands_do_not_call_llm_or_execute_actions():
