@@ -104,7 +104,10 @@ The saved phrase text selects a catalog entry. The catalog supplies the training
 If metadata intent disagrees with the catalog, the manifest report records the
 mismatch. This allows the five existing `你吃饭了吗？` recordings to remain
 untouched while mapping them to `zh_chat_meal` and `CHAT_OTHER`. Unknown phrase
-text is excluded with an explicit error entry rather than guessed into a class.
+text is excluded with an explicit error entry rather than guessed into a class,
+except that recordings whose original `sourceIntent` is explicitly `UNKNOWN`
+enter the unrelated-phrase calibration/evaluation pool and are never used for
+training.
 
 ### Split and minimum checks
 
