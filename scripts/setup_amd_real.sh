@@ -3,11 +3,21 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-export SV_ROOT="${SV_ROOT:-/workspace/persistent/silent-vision}"
-export PERSISTENCE_ROOT="${PERSISTENCE_ROOT:-$SV_ROOT}"
-export TORCH_HOME="${TORCH_HOME:-$SV_ROOT/cache/torch}"
+export PERSISTENCE_ROOT="${PERSISTENCE_ROOT:-${SV_ROOT:-/workspace/persistent/silent-vision}}"
+export SV_ROOT="${SV_ROOT:-$PERSISTENCE_ROOT}"
+export TORCH_HOME="${TORCH_HOME:-$PERSISTENCE_ROOT/cache/torch}"
 export PYTHON_BIN="${PYTHON_BIN:-/opt/venv/bin/python}"
-export COMMAND_BACKEND=prototype
+export COMMAND_BACKEND="${COMMAND_BACKEND:-torch}"
+export COMMAND_CLASSIFIER_CHECKPOINT="${COMMAND_CLASSIFIER_CHECKPOINT:-$PERSISTENCE_ROOT/models/fixed-phrase.pt}"
+
+if [[ "$COMMAND_BACKEND" != "torch" && "$COMMAND_BACKEND" != "prototype" ]]; then
+  echo "COMMAND_BACKEND must be torch or prototype recording mode" >&2
+  exit 1
+fi
+if [[ "$COMMAND_BACKEND" == "torch" && ! -s "$COMMAND_CLASSIFIER_CHECKPOINT" ]]; then
+  echo "Torch phrase checkpoint not found: $COMMAND_CLASSIFIER_CHECKPOINT" >&2
+  exit 1
+fi
 
 mkdir -p \
   "$SV_ROOT/logs" \
@@ -33,8 +43,15 @@ print("torch:", torch.__version__)
 print("torch hip:", torch.version.hip)
 print("cuda available:", torch.cuda.is_available())
 print("device count:", torch.cuda.device_count())
-if torch.version.hip is None or not torch.cuda.is_available():
+if torch.version.hip is None:
     raise SystemExit("ROCm PyTorch is not available in this Python environment")
+if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
+    raise SystemExit("ROCm device cuda:0 is not available in this Python environment")
+device = torch.device("cuda:0")
+probe = torch.empty(1, device=device)
+print("selected device:", device)
+print("device name:", torch.cuda.get_device_name(0))
+del probe
 PY
 }
 
@@ -66,4 +83,4 @@ check_rocm_python
 check_rocm_python
 check_app_dependencies
 
-echo "setup complete"
+echo "setup complete: COMMAND_BACKEND=$COMMAND_BACKEND"

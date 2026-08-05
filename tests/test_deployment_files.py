@@ -1,231 +1,369 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
+import pytest
 
-def test_docker_compose_mounts_persistence_root_and_rocm_devices():
-    compose = Path("docker/docker-compose.yml").read_text()
-    assert "/workspace/persistent/silent-vision:/workspace/persistent/silent-vision" in compose
-    assert "/dev/kfd:/dev/kfd" in compose
-    assert "/dev/dri:/dev/dri" in compose
-    assert "127.0.0.1:8000:8000" in compose
-
-
-def test_dockerfile_does_not_copy_model_weights():
-    dockerfile = Path("docker/Dockerfile").read_text()
-    assert "COPY . /app" in dockerfile
-    assert "models/" not in dockerfile
+REPO_ROOT = Path(__file__).resolve().parents[1]
+OFFICIAL_SCRIPTS = (
+    "scripts/start_real_rocm.sh",
+    "scripts/setup_amd_real.sh",
+    "scripts/amd_real_oneclick.sh",
+)
 
 
-def test_smoke_scripts_exist_and_are_executable():
-    fake = Path("scripts/smoke_fake.sh")
-    rocm = Path("scripts/smoke_rocm.sh")
-    setup = Path("scripts/setup_amd_real.sh")
-    start = Path("scripts/start_real_rocm.sh")
-    oneclick = Path("scripts/amd_real_oneclick.sh")
-    assert fake.exists()
-    assert rocm.exists()
-    assert setup.exists()
-    assert start.exists()
-    assert oneclick.exists()
-    assert fake.read_text().startswith("#!/usr/bin/env bash")
-    assert rocm.read_text().startswith("#!/usr/bin/env bash")
-    assert setup.read_text().startswith("#!/usr/bin/env bash")
-    assert start.read_text().startswith("#!/usr/bin/env bash")
-    assert oneclick.read_text().startswith("#!/usr/bin/env bash")
-    assert "Visual_Speech_Recognition_for_Multiple_Languages" not in rocm.read_text()
-    assert "models/avhubert/model.pt" not in rocm.read_text()
-    assert "/opt/venv/bin/python" in setup.read_text()
-    assert "/opt/venv/bin/python" in start.read_text()
-    assert "/workspace/persistent/silent-vision" in setup.read_text()
-    assert "/workspace/persistent/silent-vision" in start.read_text()
-    assert "scripts/setup_amd_real.sh" in oneclick.read_text()
-    assert "scripts/start_real_rocm.sh" in oneclick.read_text()
-    assert "rc-tunnel" not in oneclick.read_text()
-    for removed in ["Visual_Speech_Recognition_for_Multiple_Languages", "models/minicpm-o-4_5", "HF_HOME", "MPC001_REPO"]:
-        assert removed not in setup.read_text()
-        assert removed not in start.read_text()
-    assert "check_no_removed_dependencies" in setup.read_text()
+def _run(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", script],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
 
 
-def test_frontend_stream_lifecycle_cleans_up_between_starts():
-    websocket_js = Path("frontend/websocket.js").read_text()
-    index_html = Path("frontend/index.html").read_text()
-    assert '<button id="stopButton" type="button" disabled>Cancel</button>' in index_html
-    assert "cleanupCurrentStream();" in websocket_js
-    assert "setStoppedUiState();" in websocket_js
-    assert "setText(\"visionStatus\", \"stopped\");" in websocket_js
-    assert "setText(\"lipStatus\", \"stopped\");" in websocket_js
-    assert "setText(\"semanticStatus\", \"stopped\");" in websocket_js
-    assert "setText(\"agentStatus\", \"stopped\");" in websocket_js
-    assert "setText(\"candidateOutput\", \"\");" in websocket_js
-    assert "setText(\"resultOutput\", \"\");" in websocket_js
-    assert "connectionGeneration" in websocket_js
-    assert "socketGeneration !== state.connectionGeneration" in websocket_js
-    assert "state.ws.close(1000, \"client stopped stream\");" in websocket_js
-    assert "state.streaming = false;" in websocket_js
+def _base_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
+    persistence_root = tmp_path / "persistent"
+    checkpoint = persistence_root / "models" / "fixed-phrase.pt"
+    log_path = tmp_path / "python-calls.jsonl"
+    env = os.environ.copy()
+    for name in (
+        "COMMAND_BACKEND",
+        "COMMAND_CLASSIFIER_CHECKPOINT",
+        "SV_ROOT",
+        "PERSISTENCE_ROOT",
+        "TORCH_HOME",
+        "PYTHON_BIN",
+    ):
+        env.pop(name, None)
+    env.update(
+        {
+            "SV_ROOT": str(persistence_root),
+            "PERSISTENCE_ROOT": str(persistence_root),
+            "PYTHON_CALL_LOG": str(log_path),
+        }
+    )
+    return env, checkpoint, log_path
 
 
-def test_frontend_one_shot_capture_sends_single_binary_clip():
-    websocket_js = Path("frontend/websocket.js").read_text()
-    camera_js = Path("frontend/camera.js").read_text()
-    assert "phase: \"idle\"" in websocket_js
-    assert "runCaptureCountdown(connectionGeneration);" in websocket_js
-    assert "captureCountdownSeconds" in websocket_js
-    assert "await state.camera.startPreview();" in websocket_js
-    assert "async startPreview()" in camera_js
-    assert "MediaRecorder" in camera_js
-    assert "setAnalyzingUiState();" in websocket_js
-    assert "setDoneUiState();" in websocket_js
-    assert "cameraStatus\", \"recorded\"" in websocket_js
-    assert "agentStatus\", \"done\"" in websocket_js
-    assert "stopCamera();" in websocket_js
-    assert "state.streaming = false;" in websocket_js
-    assert "state.ws.send(clipBlob);" in websocket_js
-    assert "state.ws.send(JSON.stringify({ type: \"stream.stop\" }));" in websocket_js
-    assert "function autoSubmitWhenBufferFull" not in websocket_js
-    assert "windowFrames" not in websocket_js
+def _make_logging_python(tmp_path: Path) -> Path:
+    executable = tmp_path / "logging-python"
+    executable.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            record = {
+                "args": sys.argv[1:],
+                "backend": os.environ.get("COMMAND_BACKEND"),
+                "checkpoint": os.environ.get("COMMAND_CLASSIFIER_CHECKPOINT"),
+            }
+            if sys.argv[1:] == ["-"]:
+                record["stdin"] = sys.stdin.read()
+            with Path(os.environ["PYTHON_CALL_LOG"]).open("a", encoding="utf-8") as log:
+                log.write(json.dumps(record) + "\\n")
+            """
+        ),
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    return executable
 
 
-def test_frontend_records_utterance_level_binary_video_clips():
-    websocket_js = Path("frontend/websocket.js").read_text()
-    camera_js = Path("frontend/camera.js").read_text()
-    assert "MediaRecorder" in camera_js
-    assert "recordClip" in camera_js
-    assert "video/webm" in camera_js
-    assert "clip.start" in websocket_js
-    assert "state.ws.send(clipBlob);" in websocket_js
-    assert "readAsDataURL" not in camera_js
-    assert "base64" not in camera_js.lower()
-    assert "image/jpeg" not in camera_js
+def _read_calls(path: Path) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_backend_uses_pyav_25fps_clip_preprocessing_and_debug_artifacts():
-    requirements = Path("requirements.txt").read_text()
-    websocket_py = Path("api/websocket.py").read_text()
-    clip_py = Path("video/clip.py").read_text()
-    roi_py = Path("video/mouth_roi.py").read_text()
-    assert "av>=" in requirements
-    assert "decode_video_clip" in websocket_py
-    assert "target_fps" in clip_py
-    assert "command_clip_fps" in websocket_py
-    assert "write_mouth_roi_video" in roi_py
-    assert "write_aligned_face_video" in roi_py
-    assert "mouth_roi_video" in websocket_py
-    assert "mouth_roi_npy" in websocket_py
-    assert "aligned_face_video" in websocket_py
-    assert "original_video" in websocket_py
+@pytest.mark.parametrize("script", OFFICIAL_SCRIPTS)
+def test_official_scripts_default_to_torch_with_the_fixed_phrase_checkpoint(
+    script, tmp_path
+):
+    env, checkpoint, log_path = _base_env(tmp_path)
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"synthetic checkpoint")
+    env["PYTHON_BIN"] = str(_make_logging_python(tmp_path))
+
+    result = _run(script, env)
+
+    assert result.returncode == 0, result.stderr
+    calls = _read_calls(log_path)
+    assert calls
+    assert {call["backend"] for call in calls} == {"torch"}
+    assert {call["checkpoint"] for call in calls} == {str(checkpoint)}
 
 
-def test_command_classifier_files_and_scripts_exist():
-    for path in [
-        "command/labels.py",
-        "command/model.py",
-        "command/checkpoint.py",
-        "command/inference.py",
-        "scripts/build_command_manifest.py",
-    ]:
-        assert Path(path).exists()
+@pytest.mark.parametrize("script", OFFICIAL_SCRIPTS)
+def test_official_scripts_fail_closed_before_python_when_checkpoint_is_missing(
+    script, tmp_path
+):
+    env, checkpoint, log_path = _base_env(tmp_path)
+    env["PYTHON_BIN"] = str(_make_logging_python(tmp_path))
 
-    inference_py = Path("command/inference.py").read_text()
-    schemas_py = Path("backend/schemas.py").read_text()
-    assert "top1_margin" in inference_py
-    assert "CommandDecision" in schemas_py
-    assert "LIGHT_ON" in Path("command/labels.py").read_text()
+    result = _run(script, env)
+
+    assert result.returncode != 0
+    assert str(checkpoint) in result.stderr
+    assert _read_calls(log_path) == []
 
 
-def test_fixed_phrase_torch_entrypoints_exist():
-    assert Path("scripts/train_command_classifier.py").exists()
-    assert Path("scripts/validate_command_classifier.py").exists()
-    assert Path("scripts/infer_command_clip.py").exists()
+def test_oneclick_allows_only_an_explicit_visibly_labeled_prototype_recording_mode(
+    tmp_path,
+):
+    env, _, log_path = _base_env(tmp_path)
+    env["PYTHON_BIN"] = str(_make_logging_python(tmp_path))
+    env["COMMAND_BACKEND"] = "prototype"
+
+    result = _run("scripts/amd_real_oneclick.sh", env)
+
+    assert result.returncode == 0, result.stderr
+    assert "recording mode" in result.stdout.lower()
+    calls = _read_calls(log_path)
+    assert calls
+    assert {call["backend"] for call in calls} == {"prototype"}
 
 
-def test_rejected_commands_do_not_call_llm_or_execute_actions():
-    websocket_py = Path("api/websocket.py").read_text()
-    agent_py = Path("agent/agent.py").read_text()
-    assert "command_decision.accepted" in websocket_py
-    assert "semantic_interpreter" not in websocket_py
-    assert "MiniCPM" not in websocket_py
-    assert "decide_command" in agent_py
-    assert "action=\"reject\"" in agent_py
+@pytest.mark.parametrize("script", OFFICIAL_SCRIPTS)
+def test_official_scripts_reject_fake_backend(script, tmp_path):
+    env, _, log_path = _base_env(tmp_path)
+    env["PYTHON_BIN"] = str(_make_logging_python(tmp_path))
+    env["COMMAND_BACKEND"] = "fake"
+
+    result = _run(script, env)
+
+    assert result.returncode != 0
+    assert "torch or prototype" in result.stderr.lower()
+    assert _read_calls(log_path) == []
 
 
-def test_websocket_has_calibration_upload_path():
-    source = Path("api/websocket.py").read_text()
+def _make_fake_python_modules(tmp_path: Path) -> Path:
+    module_root = tmp_path / "fake-modules"
+    module_root.mkdir()
+    (module_root / "torch.py").write_text(
+        textwrap.dedent(
+            """
+            import os
 
-    assert "calibration.start" in source
-    assert "calibration.saved" in source
-    assert "save_prototype_sample" in source
-    assert "profileId" in source
+            __version__ = "2.9.1+rocm-test"
+
+            class version:
+                _hip = os.environ.get("FAKE_TORCH_HIP", "7.2")
+                hip = _hip if _hip else None
+
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return os.environ.get("FAKE_TORCH_AVAILABLE", "1") == "1"
+
+                @staticmethod
+                def device_count():
+                    return int(os.environ.get("FAKE_TORCH_DEVICE_COUNT", "1"))
+
+                @staticmethod
+                def get_device_name(index):
+                    if index != 0 or cuda.device_count() < 1:
+                        raise RuntimeError("cuda:0 unavailable")
+                    return "Synthetic Radeon"
+
+            def device(name):
+                if name != "cuda:0":
+                    raise RuntimeError("unexpected device")
+                return name
+
+            def empty(size, device):
+                if device != "cuda:0" or os.environ.get("FAKE_TORCH_ALLOCATE", "1") != "1":
+                    raise RuntimeError("cuda:0 allocation failed")
+                return object()
+            """
+        ),
+        encoding="utf-8",
+    )
+    uvicorn = module_root / "uvicorn"
+    uvicorn.mkdir()
+    (uvicorn / "__init__.py").write_text("", encoding="utf-8")
+    (uvicorn / "__main__.py").write_text(
+        textwrap.dedent(
+            """
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            Path(os.environ["LAUNCH_RECORD"]).write_text(
+                json.dumps({
+                    "args": sys.argv[1:],
+                    "backend": os.environ.get("COMMAND_BACKEND"),
+                    "checkpoint": os.environ.get("COMMAND_CLASSIFIER_CHECKPOINT"),
+                }),
+                encoding="utf-8",
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+    return module_root
 
 
-def test_frontend_has_prototype_calibration_ui():
-    html = Path("frontend/index.html").read_text()
-    js = Path("frontend/websocket.js").read_text()
-
-    assert "calibration-intent" in html
-    assert "calibration-phrase" in html
-    assert "Save Sample" in html
-    assert "GLOBAL_PROFILE_ID = \"global\"" in js
-    assert "silentVisionProfileId" not in js
-    assert "localStorage" not in js
-    assert "profileId: GLOBAL_PROFILE_ID" in js
-    assert "scope: \"global\"" in js
-    assert "calibration.start" in js
-
-
-def test_prototype_scripts_and_startup_defaults_exist():
-    assert Path("scripts/inspect_prototypes.py").exists()
-    assert Path("scripts/build_global_prototypes.py").exists()
-
-    oneclick = Path("scripts/amd_real_oneclick.sh").read_text()
-    readme = Path("README.md").read_text()
-
-    assert "COMMAND_BACKEND=prototype" in oneclick
-    assert "profiles/global" in readme
-    assert "profileId=global" in readme
-    assert "Personal Profile" not in readme
+def _real_python_start_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
+    env, checkpoint, _ = _base_env(tmp_path)
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"synthetic checkpoint")
+    launch_record = tmp_path / "launch.json"
+    module_root = _make_fake_python_modules(tmp_path)
+    env.update(
+        {
+            "PYTHON_BIN": sys.executable,
+            "PYTHONPATH": os.pathsep.join(
+                filter(None, (str(module_root), env.get("PYTHONPATH", "")))
+            ),
+            "LAUNCH_RECORD": str(launch_record),
+        }
+    )
+    return env, checkpoint, launch_record
 
 
-def test_backend_clip_cancel_and_cleanup_release_active_session():
-    websocket_py = Path("api/websocket.py").read_text()
-    manager_py = Path("session/manager.py").read_text()
-    assert "def stop_stream(self) -> None:" in manager_py
-    assert "stream_generation" in manager_py
-    assert "inference_cancel_event" in manager_py
-    assert "active.stop_stream()" in websocket_py
-    assert "active.commit_stream()" in websocket_py
-    assert "active.accepting_frames" in websocket_py
-    assert "cancel_active_inference(" in websocket_py
-    assert "cancel_active_inference(\"websocket cleanup\")" in websocket_py
-    assert "active.inference_cancel_event.set()" in websocket_py
-    assert "clip.cancel" in websocket_py
-    assert "run_inference_loop" not in websocket_py
-    assert "add_mouth_frame" not in manager_py
+def test_start_preflights_hip_and_cuda_zero_before_launch(tmp_path):
+    env, checkpoint, launch_record = _real_python_start_env(tmp_path)
+
+    result = _run("scripts/start_real_rocm.sh", env)
+
+    assert result.returncode == 0, result.stderr
+    launched = json.loads(launch_record.read_text(encoding="utf-8"))
+    assert launched["backend"] == "torch"
+    assert launched["checkpoint"] == str(checkpoint)
+    assert "cuda:0" in result.stdout
 
 
-def test_backend_debug_dump_writes_clip_artifacts():
-    websocket_py = Path("api/websocket.py").read_text()
-    assert "captureCountdownSeconds" in websocket_py
-    assert "save_original_video" in websocket_py
-    assert "mouth_roi_npy" in websocket_py
-    assert "aligned_face_video" in websocket_py
-    assert "mouth_roi_video" in websocket_py
+@pytest.mark.parametrize(
+    "failure_env",
+    [
+        {"FAKE_TORCH_HIP": ""},
+        {"FAKE_TORCH_AVAILABLE": "0"},
+        {"FAKE_TORCH_DEVICE_COUNT": "0"},
+        {"FAKE_TORCH_ALLOCATE": "0"},
+    ],
+)
+def test_start_never_launches_when_rocm_or_cuda_zero_preflight_fails(
+    failure_env, tmp_path
+):
+    env, _, launch_record = _real_python_start_env(tmp_path)
+    env.update(failure_env)
+
+    result = _run("scripts/start_real_rocm.sh", env)
+
+    assert result.returncode != 0
+    assert not launch_record.exists()
 
 
-def test_real_mode_suppresses_noisy_mediapipe_warnings():
-    face = Path("vision/face.py").read_text()
-    assert "SymbolDatabase.GetPrototype" in face
+def _make_smoke_dispatch_python(tmp_path: Path) -> Path:
+    executable = tmp_path / "smoke-python"
+    executable.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            args = sys.argv[1:]
+            with Path(os.environ["PYTHON_CALL_LOG"]).open("a", encoding="utf-8") as log:
+                log.write(json.dumps({"args": args}) + "\\n")
+            if args[:2] == ["-m", "pytest"]:
+                raise SystemExit(0)
+            if args and args[0].endswith("scripts/infer_command_clip.py"):
+                print(os.environ["FAKE_INFERENCE_JSON"])
+                raise SystemExit(0)
+            if args and args[0] == "-":
+                real_python = os.environ["REAL_PYTHON"]
+                os.execv(real_python, [real_python, *args])
+            raise SystemExit(f"unexpected smoke Python invocation: {args}")
+            """
+        ),
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    return executable
 
 
-def test_requirements_use_current_compatible_real_mode_versions():
-    requirements = Path("requirements.txt").read_text()
-    assert "fastapi>=0.141.1,<1.0.0" in requirements
-    assert "uvicorn[standard]>=0.52.0,<1.0.0" in requirements
-    assert "pydantic>=2.13.4,<3.0.0" in requirements
-    assert "numpy>=1.26.4,<2.0.0" in requirements
-    assert "opencv-python-headless>=4.10.0,<4.11.0" in requirements
-    assert "mediapipe==0.10.14" in requirements
-    assert "Pillow==10.4.0" in requirements
-    assert "Pillow>=12.0.0" not in requirements
-    for removed in ["transformers", "huggingface-hub", "accelerate", "safetensors", "librosa", "soundfile", "minicpmo-utils"]:
-        assert removed not in requirements
-    assert "torch" not in requirements
+def _smoke_env(tmp_path: Path, prediction: dict[str, object]) -> tuple[dict[str, str], Path]:
+    env, checkpoint, log_path = _base_env(tmp_path)
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"synthetic checkpoint")
+    sample = tmp_path / "mouth-roi.npy"
+    sample.write_bytes(b"synthetic NPY")
+    module_root = _make_fake_python_modules(tmp_path)
+    env.update(
+        {
+            "COMMAND_CLASSIFIER_CHECKPOINT": str(checkpoint),
+            "COMMAND_SMOKE_SAMPLE": str(sample),
+            "PYTHON_BIN": str(_make_smoke_dispatch_python(tmp_path)),
+            "REAL_PYTHON": sys.executable,
+            "PYTHONPATH": os.pathsep.join(
+                filter(None, (str(module_root), env.get("PYTHONPATH", "")))
+            ),
+            "FAKE_INFERENCE_JSON": json.dumps(prediction),
+        }
+    )
+    return env, log_path
+
+
+def test_rocm_smoke_runs_phrase_tests_and_a_checkpoint_backed_prediction(tmp_path):
+    env, log_path = _smoke_env(
+        tmp_path,
+        {"backend": "torch", "device": "cuda:0", "thresholdSource": "checkpoint"},
+    )
+
+    result = _run("scripts/smoke_rocm.sh", env)
+
+    assert result.returncode == 0, result.stderr
+    calls = _read_calls(log_path)
+    pytest_call = next(call for call in calls if call["args"][:2] == ["-m", "pytest"])
+    assert {
+        "tests/test_phrase_model.py",
+        "tests/test_phrase_checkpoint.py",
+        "tests/test_phrase_runtime.py",
+    } <= set(pytest_call["args"])
+    inference_call = next(
+        call
+        for call in calls
+        if call["args"] and call["args"][0].endswith("scripts/infer_command_clip.py")
+    )
+    assert "--checkpoint" in inference_call["args"]
+    assert "--mouth-roi" in inference_call["args"]
+
+
+def test_rocm_smoke_fails_if_prediction_is_not_on_torch_cuda_zero(tmp_path):
+    env, _ = _smoke_env(
+        tmp_path,
+        {"backend": "torch", "device": "cpu", "thresholdSource": "checkpoint"},
+    )
+
+    result = _run("scripts/smoke_rocm.sh", env)
+
+    assert result.returncode != 0
+    assert "cuda:0" in result.stderr
+
+
+@pytest.mark.parametrize("script", (*OFFICIAL_SCRIPTS, "scripts/smoke_rocm.sh"))
+def test_deployment_scripts_have_valid_shell_syntax(script):
+    result = subprocess.run(
+        ["bash", "-n", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

@@ -1,8 +1,10 @@
-from fastapi.testclient import TestClient
 import numpy as np
+import pytest
+from fastapi.testclient import TestClient
 
 from backend.config import Settings
 from backend.main import create_app
+from backend.schemas import CommandDecision
 from video.clip import DecodedClip
 
 
@@ -26,6 +28,210 @@ def patch_clip_pipeline(monkeypatch):
         ),
     )
     monkeypatch.setattr("api.websocket.extract_mouth_roi_clip", lambda **kwargs: FakeRoiClip())
+
+
+class StubClassifier:
+    def __init__(self, decision: CommandDecision):
+        self.decision = decision
+
+    def predict(self, mouth_frames, metadata):
+        return self.decision.model_copy(
+            update={"metadata": self.decision.metadata | metadata}
+        )
+
+
+def collect_clip_messages(app):
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+    messages = {}
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json({"type": "clip.start", "profileId": "global"})
+        assert websocket.receive_json()["type"] == "clip.started"
+        websocket.send_bytes(b"fake-webm")
+        for _ in range(20):
+            message = websocket.receive_json()
+            messages[message["type"]] = message
+            if message["type"] == "agent.result":
+                break
+    return messages
+
+
+def send_stubbed_clip(app, monkeypatch, decision):
+    patch_clip_pipeline(monkeypatch)
+    app.state.command_classifier = StubClassifier(decision)
+    return collect_clip_messages(app)
+
+
+def test_accepted_light_phrase_executes_with_exact_display_text(app, monkeypatch):
+    messages = send_stubbed_clip(
+        app,
+        monkeypatch,
+        CommandDecision(
+            intent="LIGHT_ON",
+            accepted=True,
+            executable=True,
+            confidence=0.98,
+            margin=0.90,
+            topK=[],
+            logits=[],
+            reason="accepted executable intent",
+            metadata={
+                "phraseId": "zh_light_on_hello",
+                "matchedPhrase": "你好，请帮我打开灯",
+                "displayText": "你好，请帮我打开灯",
+                "language": "zh",
+            },
+        ),
+    )
+
+    assert messages["command.result"]["metadata"]["displayText"] == "你好，请帮我打开灯"
+    assert messages["agent.result"]["action"] == "execute"
+    assert messages["agent.result"]["text"] == "你好，请帮我打开灯"
+
+
+def test_rejected_unknown_phrase_never_executes(app, monkeypatch):
+    messages = send_stubbed_clip(
+        app,
+        monkeypatch,
+        CommandDecision(
+            intent="UNKNOWN",
+            accepted=False,
+            executable=False,
+            confidence=0.51,
+            margin=0.02,
+            topK=[],
+            logits=[],
+            reason="low_probability",
+            metadata={"rejectionReason": "low_probability"},
+        ),
+    )
+
+    assert messages["command.result"]["accepted"] is False
+    assert messages["agent.result"]["action"] == "reject"
+    assert messages["agent.result"]["action"] != "execute"
+
+
+def test_accepted_chat_phrase_is_displayed_but_never_executes(app, monkeypatch):
+    messages = send_stubbed_clip(
+        app,
+        monkeypatch,
+        CommandDecision(
+            intent="CHAT_OTHER",
+            accepted=True,
+            executable=False,
+            confidence=0.97,
+            margin=0.88,
+            topK=[],
+            logits=[],
+            reason="accepted non-executable intent",
+            metadata={
+                "phraseId": "zh_chat_meal",
+                "matchedPhrase": "你吃饭了吗？",
+                "displayText": "你吃饭了吗？",
+                "language": "zh",
+            },
+        ),
+    )
+
+    assert messages["command.result"]["accepted"] is True
+    assert messages["agent.result"]["action"] == "ignore"
+    assert messages["agent.result"]["text"] == "你吃饭了吗？"
+
+
+def test_real_torch_websocket_accepts_catalog_text_and_rejects_without_execution(
+    tmp_path, monkeypatch
+):
+    torch = pytest.importorskip("torch")
+    if (
+        getattr(torch.version, "hip", None) is None
+        or not torch.cuda.is_available()
+        or torch.cuda.device_count() < 1
+    ):
+        pytest.skip("requires ROCm PyTorch and cuda:0; run on the Radeon host")
+
+    from command.checkpoint import save_phrase_checkpoint
+    from command.model import build_fixed_phrase_model
+
+    model = build_fixed_phrase_model(2).eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.classifier.bias.copy_(torch.tensor([10.0, -10.0]))
+    checkpoint = tmp_path / "synthetic-fixed-phrase.pt"
+    save_phrase_checkpoint(
+        checkpoint,
+        {
+            "schemaVersion": "silent-vision.fixed-phrase.v1",
+            "modelState": model.state_dict(),
+            "phraseIds": ["zh_light_on_hello", "zh_chat_meal"],
+            "phraseCatalog": [
+                {
+                    "phraseId": "zh_light_on_hello",
+                    "text": "你好，请帮我打开灯",
+                    "language": "zh",
+                    "intent": "LIGHT_ON",
+                    "enabled": True,
+                },
+                {
+                    "phraseId": "zh_chat_meal",
+                    "text": "你吃饭了吗？",
+                    "language": "zh",
+                    "intent": "CHAT_OTHER",
+                    "enabled": True,
+                },
+            ],
+            "featureConfig": {
+                "fps": 25,
+                "height": 96,
+                "width": 96,
+                "downsample": 16,
+            },
+            "modelConfig": {"embeddingDim": 64, "parameterCap": 150000},
+            "decisionThresholds": {
+                "minProbability": 0.80,
+                "maxCosineDistance": {
+                    "zh_light_on_hello": 1.10,
+                    "zh_chat_meal": 1.10,
+                },
+            },
+            "classCentroids": torch.zeros((2, 64), dtype=torch.float32),
+            "trainingSummary": {"seed": 17, "evidentiary": False},
+        },
+    )
+    patch_clip_pipeline(monkeypatch)
+
+    accepted_app = create_app(
+        Settings(
+            command_backend="torch",
+            command_classifier_checkpoint=checkpoint,
+        )
+    )
+    accepted = collect_clip_messages(accepted_app)
+    accepted_command = accepted["command.result"]
+    assert accepted_command["metadata"]["backend"] == "torch"
+    assert accepted_command["metadata"]["phraseId"] == "zh_light_on_hello"
+    assert accepted_command["metadata"]["displayText"] == "你好，请帮我打开灯"
+    assert accepted["agent.result"]["action"] == "execute"
+    assert accepted["agent.result"]["text"] == "你好，请帮我打开灯"
+
+    rejected_app = create_app(
+        Settings(
+            command_backend="torch",
+            command_classifier_checkpoint=checkpoint,
+            command_phrase_distance_override=0.0,
+        )
+    )
+    rejected = collect_clip_messages(rejected_app)
+    rejected_command = rejected["command.result"]
+    assert rejected_command["intent"] == "UNKNOWN"
+    assert rejected_command["accepted"] is False
+    assert rejected_command["executable"] is False
+    assert "phraseId" not in rejected_command["metadata"]
+    assert "displayText" not in rejected_command["metadata"]
+    assert rejected["agent.result"]["action"] == "reject"
 
 
 def test_fake_websocket_flow_reaches_agent_result(app, monkeypatch):
