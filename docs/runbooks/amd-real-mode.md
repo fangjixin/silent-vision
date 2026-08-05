@@ -1,92 +1,137 @@
-# AMD ROCm command-mode runbook
+# AMD Radeon / ROCm Runbook
 
-Silent Vision on the AMD machine must run with the ROCm Python environment:
+Silent Vision's official classifier path uses the ROCm Python environment:
 
 ```bash
 /opt/venv/bin/python
 ```
 
-Do not start it with `/usr/bin/python`, `python`, or a global `uvicorn`, because
-those can load a CUDA/NVIDIA PyTorch wheel.
+The Torch phrase classifier has no CPU fallback. Video decode, face detection,
+alignment, and mouth cropping remain CPU preprocessing.
 
-## Setup
+## Official Torch Startup
 
-From the Silent Vision repository on the AMD machine:
-
-```bash
-cd /workspace/template-repos/template-907/repo
-bash scripts/setup_amd_real.sh
-```
-
-The script prepares:
-
-- `/workspace/persistent/silent-vision`
-- command prototype/profile directories
-- Python dependencies in `/opt/venv`
-- PyAV / MediaPipe FaceMesh validation
-- ROCm PyTorch validation
-- optional torch classifier checkpoint validation when `COMMAND_BACKEND=torch`
-
-It does not download open-vocabulary transcription models.
-
-## Start
+From the synchronized repository on the AMD machine:
 
 ```bash
-cd /workspace/template-repos/template-907/repo
-bash scripts/start_real_rocm.sh
-```
-
-For prototype mode:
-
-```bash
-export COMMAND_BACKEND=prototype
-bash scripts/start_real_rocm.sh
-```
-
-For trained torch classifier mode:
-
-```bash
+cd /path/to/silent-vision
+export PERSISTENCE_ROOT=/workspace/persistent/silent-vision
 export COMMAND_BACKEND=torch
-export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/command_classifier.pt
-bash scripts/start_real_rocm.sh
-```
-
-## One-command setup and start
-
-```bash
-cd /workspace/template-repos/template-907/repo
+export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/fixed-phrase.pt
+export ALLOWED_ORIGINS='*'
 bash scripts/amd_real_oneclick.sh
 ```
 
-This script does not expose the public tunnel. Keep the tunnel command in a
-separate terminal.
+The setup and startup scripts fail closed when the checkpoint is missing, HIP is
+unavailable, `cuda:0` is not visible, or a one-element allocation on the device
+fails. They print the Python executable, PyTorch version, HIP version, device
+availability, selected device, and device name before Uvicorn starts.
 
-Expected startup signs:
+The launchers default to `COMMAND_BACKEND=torch` and to
+`$PERSISTENCE_ROOT/models/fixed-phrase.pt`; the explicit exports above make the
+demo inputs visible in the terminal recording.
 
-```text
-torch hip: 7.x
-cuda available: True
-setup complete
-Application startup complete.
-Uvicorn running on http://127.0.0.1:8000
-```
-
-## Tunnel
-
-In a second AMD terminal:
+In a second AMD terminal, expose the service if the event image provides
+`rc-tunnel`:
 
 ```bash
 $HOME/.local/bin/rc-tunnel expose --port 8000
 ```
 
-Open the emitted `https://rc-....radeon.firstdg.ai` URL from the local browser.
+Open the emitted HTTPS URL from the browser that has the camera. Replace `*`
+with the final public origin when practical.
 
-## Runtime behavior
+## Explicit Prototype Recording Mode
 
-- Browser `localhost:8000` is not the AMD server.
-- `Start` records one 2-5 second video clip and submits it once.
-- `Cancel` cancels the current recording and releases the server session.
-- Recognition runs after the full clip arrives; there is no 75-frame streaming
-  window in the runtime flow.
-- When `DEBUG_DUMP_WINDOWS=true`, debug artifacts are saved under
-  `/workspace/persistent/silent-vision/logs/command-runs/`.
+Prototype mode is for recording and inspecting samples. It is not the official
+classifier demo and is never selected automatically as a fallback.
+
+```bash
+cd /path/to/silent-vision
+export PERSISTENCE_ROOT=/workspace/persistent/silent-vision
+export COMMAND_BACKEND=prototype
+export ALLOWED_ORIGINS='*'
+bash scripts/amd_real_oneclick.sh
+```
+
+The launcher prints `Recording mode` before startup. Save independent takes to
+the global profile. Enter the exact registered phrase and its mapped intent;
+save unrelated clips with source intent `UNKNOWN`.
+
+## Build the Dataset Partitions
+
+```bash
+/opt/venv/bin/python scripts/build_command_manifest.py \
+  --profile-root /workspace/persistent/silent-vision/profiles \
+  --catalog command/phrase_catalog.json \
+  --output-dir /workspace/persistent/silent-vision/manifests \
+  --seed 17
+```
+
+The official command requires 15 independent takes for each registered phrase
+and 15 unrelated clips. Append `--allow-small-dataset` only for an execution
+smoke; that inventory is marked non-evidentiary.
+
+## Train and Calibrate
+
+```bash
+mkdir -p /workspace/persistent/silent-vision/models \
+  /workspace/persistent/silent-vision/reports
+
+/opt/venv/bin/python scripts/train_command_classifier.py \
+  --catalog command/phrase_catalog.json \
+  --inventory /workspace/persistent/silent-vision/manifests/inventory.json \
+  --train-manifest /workspace/persistent/silent-vision/manifests/train.jsonl \
+  --calibration-known /workspace/persistent/silent-vision/manifests/calibration-known.jsonl \
+  --calibration-unknown /workspace/persistent/silent-vision/manifests/calibration-unknown.jsonl \
+  --output /workspace/persistent/silent-vision/models/fixed-phrase.pt \
+  --run-summary /workspace/persistent/silent-vision/reports/training-run.json \
+  --epochs 80 \
+  --seed 17
+```
+
+Training authenticates the catalog and manifest hashes, loads only the training
+and calibration roles, calibrates minimum probability plus per-phrase maximum
+centroid distance, and saves both thresholds in the checkpoint.
+
+## Frozen Final Evaluation
+
+```bash
+/opt/venv/bin/python scripts/validate_command_classifier.py \
+  --checkpoint /workspace/persistent/silent-vision/models/fixed-phrase.pt \
+  --known-manifest /workspace/persistent/silent-vision/manifests/evaluation-known.jsonl \
+  --unknown-manifest /workspace/persistent/silent-vision/manifests/evaluation-unknown.jsonl \
+  --output /workspace/persistent/silent-vision/reports/final-evaluation.json
+```
+
+Do not pass threshold overrides for official evidence. The command evaluates the
+frozen checkpoint against final partitions only and writes metric numerators,
+denominators, hashes, threshold provenance, backend, and device.
+
+## One-Clip and ROCm Smoke Checks
+
+```bash
+/opt/venv/bin/python scripts/infer_command_clip.py \
+  --checkpoint /workspace/persistent/silent-vision/models/fixed-phrase.pt \
+  --mouth-roi /absolute/path/to/mouth_roi.npy
+```
+
+```bash
+export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/fixed-phrase.pt
+export COMMAND_SMOKE_SAMPLE=/absolute/path/to/mouth_roi.npy
+bash scripts/smoke_rocm.sh
+```
+
+The smoke verifies the guarded Torch path and a checkpoint-backed prediction on
+`cuda:0`. It is not a substitute for final evaluation.
+
+## Runtime Notes
+
+- `Start` records one 2-5 second clip and submits it once.
+- Recognition starts after the complete clip arrives.
+- An accepted result displays exact catalog text and the mapped intent.
+- A clip that fails either the probability or centroid-distance gate returns
+  `UNKNOWN` and cannot execute.
+- Top-1 margin is diagnostic only for the fixed-phrase Torch path.
+- `Cancel` ends the active capture and releases the server session.
+- Debug artifacts are saved only when `DEBUG_DUMP_WINDOWS=true`.

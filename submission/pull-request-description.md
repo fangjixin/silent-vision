@@ -2,42 +2,48 @@
 
 ## Project
 
-Silent Vision classifies a 2-5 second silent camera clip as one bounded visual
-command. It returns a structured command decision and agent result. The current
-repository does not control physical lights or doors and does not yet create a
-browser recording or still-image artifact.
+Silent Vision recognizes a personalized catalog of fixed phrases from a 2-5
+second silent camera clip. It is a closed-set visual classifier, not
+open-vocabulary lipreading. The initial catalog contains two Chinese phrases,
+mapped to `LIGHT_ON` and `CHAT_OTHER`; `UNKNOWN` is produced only by rejection.
 
-The intended Track 1 demonstration uses CPU video preprocessing and a PyTorch
-temporal classifier on AMD Radeon through ROCm. The final Radeon checkpoint,
-held-out validation evidence, Creator Mode artifact flow, demo video, and video
-URL must be added before this submission is presented as complete.
+PyAV and MediaPipe decode the video, find one face, align it, and create a 96 x
+96 grayscale mouth sequence on CPU. The fixed-phrase Torch model trains and runs
+on AMD Radeon through ROCm. It uses 16 x 16 appearance and adjacent-frame motion
+maps, two depthwise-separable temporal blocks, attentive pooling, a normalized
+embedding, and a dynamic phrase head.
 
-## Requirement map
+An accepted prediction must pass both the checkpoint probability threshold and
+the predicted phrase's centroid-distance threshold. Exact text and intent then
+come from the checkpoint catalog. Rejected clips return `UNKNOWN` with no matched
+phrase text and no executable action. Top-1 margin is diagnostic only.
 
-- [x] English source and reproduction guide:
-  `submissions/track1-silent-vision/README.md`
-- [x] Editable six-section project profile copy:
+The repository returns structured decisions. It does not control a physical
+device or content-creation application. The command boundary can be integrated
+with a creator workflow, but that integration is not claimed here.
+
+## Submission materials
+
+- [x] English source, dependency list, setup, training, evaluation, and startup
+  guide: `submissions/track1-silent-vision/README.md`
+- [x] Versioned phrase catalog:
+  `submissions/track1-silent-vision/command/phrase_catalog.json`
+- [x] Project profile source and generated PDF:
   `submissions/track1-silent-vision/docs/submission/project-profile-source.md`
-- [x] Generated project profile PDF:
+  and
   `submissions/track1-silent-vision/submission/Silent-Vision-Project-Profile.pdf`
-- [x] Editable poster copy:
-  `submissions/track1-silent-vision/docs/submission/poster-copy.md`
-- [x] Generated poster PDF and PNG:
-  `submissions/track1-silent-vision/submission/Silent-Vision-Poster.pdf` and
+- [x] Poster source, PDF, and PNG:
+  `submissions/track1-silent-vision/docs/submission/poster-copy.md`,
+  `submissions/track1-silent-vision/submission/Silent-Vision-Poster.pdf`, and
   `submissions/track1-silent-vision/submission/Silent-Vision-Poster.png`
-- [x] Demo recording script and safety checklist:
+- [x] Demo script and evidence checklist:
   `submissions/track1-silent-vision/submission/demo-video-script.md`
-- [ ] Demo video: added after the recorded Radeon run
+- [ ] Demo video URL: add after the recorded Radeon run
 - [x] Source repository: <https://github.com/fangjixin/silent-vision>
 
-## Current technical path
+## Evidence status
 
-The browser records WebM with audio disabled. PyAV decodes and resamples the clip
-to 25 FPS. MediaPipe detects one face, and CPU preprocessing creates a stable
-96 x 96 grayscale mouth sequence. The prototype backend supports calibration.
-The intended demo selects `COMMAND_BACKEND=torch` so a Conformer-style temporal
-classifier runs through PyTorch on Radeon/ROCm. Confidence and top-1 margin
-checks reject uncertain commands.
-
-No measured performance result is included because the final Radeon run has not
-yet been recorded.
+The official Radeon training run, untouched final evaluation, and recorded demo
+remain pending. A small-data run may be used only to prove that the pipeline
+executes. This pull request does not claim accuracy, latency, throughput, or
+memory results before the final report exists.

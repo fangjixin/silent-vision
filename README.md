@@ -1,133 +1,95 @@
 # Silent Vision
 
-Silent Vision reads a short, silent camera clip and classifies it as one command
-from a closed set. The current repository can return both a `command.result` and
-a structured `agent.result`. It does not transcribe arbitrary speech, control a
-light or door, or create a browser recording or still-image artifact.
+Silent Vision recognizes a personalized catalog of fixed phrases from a short,
+silent camera clip. It is not open-vocabulary lipreading and does not transcribe
+arbitrary speech.
 
-The intended hackathon demonstration uses CPU preprocessing followed by a
-PyTorch temporal classifier on AMD Radeon through ROCm. The final Radeon
-checkpoint, validation report, run log, and video are pending. No benchmark or
-accuracy figure is claimed here.
+The browser records a 2-5 second WebM clip with audio disabled. CPU code decodes
+the video, detects one face, aligns it, and extracts a 96 x 96 grayscale mouth
+sequence. The official classifier then trains and runs in PyTorch on AMD Radeon
+through ROCm. An accepted result gets its exact text and business intent from the
+registered phrase catalog.
+
+The final Radeon run, evaluation report, and recorded demonstration are still
+pending. This repository does not publish an accuracy, latency, throughput, or
+memory figure. A run built with `--allow-small-dataset` is non-evidentiary and
+proves pipeline execution only.
 
 Repository: <https://github.com/fangjixin/silent-vision>
 
-## What Silent Vision Does
+## Current Catalog and Product Boundary
 
-The browser records one 2-5 second `video/webm` clip with audio disabled. The
-backend decodes the clip at 25 FPS, finds one face, extracts a stable 96 x 96
-grayscale mouth region, and sends that sequence to one of three command
-backends:
+The fixed-phrase checkpoint schema has one learned class per enabled `phraseId`.
+`UNKNOWN` is a rejection result, not a trained class. The initial catalog is:
 
-- `fake` gives deterministic local test behavior.
-- `prototype` compares the clip with saved examples in the global profile.
-- `torch` loads a temporal classifier checkpoint.
+| phraseId | Exact displayed text | Language | Mapped intent |
+| --- | --- | --- | --- |
+| `zh_light_on_hello` | `你好，请帮我打开灯` | `zh` | `LIGHT_ON` |
+| `zh_chat_meal` | `你吃饭了吗？` | `zh` | `CHAT_OTHER` |
 
-The current labels are `LIGHT_ON`, `LIGHT_OFF`, `OPEN_DOOR`, `CHAT_OTHER`, and
-`UNKNOWN`. Confidence and top-1 margin checks reject uncertain results as
-`UNKNOWN`. Accepted smart-space labels reach the agent boundary as structured
-`action="execute"` results, but no integration in this repository acts on them.
-`CHAT_OTHER` produces `action="ignore"`, and rejected commands produce
-`action="reject"`.
+An accepted `LIGHT_ON` decision can cross the current agent boundary as
+`action="execute"`; an accepted `CHAT_OTHER` decision becomes `action="ignore"`;
+a rejected clip becomes `action="reject"`. This repository returns structured
+decisions only. It does not control a light, door, camera recorder, or editing
+application.
 
-This bounded behavior is useful when a microphone is unwanted or unreliable:
-an accessibility desk, a noisy worksite, or a creator setup where a person needs
-a small command vocabulary. It is not a general lip-reading system.
+The same boundary can be integrated into a creator workflow as a deliberate,
+hands-free command input, but that downstream integration is outside this
+repository. Before connecting an executable intent to any device or production
+tool, add an allowlist, confirmation policy, adapter, and failure handling.
 
-## Creator Workflow
-
-The intended downstream use is hands-free creator control: an accepted visual
-command could start a browser recording, stop it and expose a WebM download, or
-capture a PNG still. That Creator Mode and its creator intent labels are planned
-demo behavior, not current behavior in this checkout.
-
-Today the browser offers one-shot recognition and prototype calibration. Click
-`Start`, wait through the countdown, mouth one complete command, and allow the
-five-second capture to finish. The page shows the command candidates, acceptance
-decision, and structured agent result. `Cancel` stops the active capture and
-connection. The browser does not produce a downloadable creator artifact.
-
-Do not connect the current `execute` result to a physical device without adding
-an explicit allowlist, confirmation policy, device adapter, and failure handling.
-
-## Architecture
+## System Architecture
 
 ```text
 Browser camera (audio: false)
   -> 2-5 second WebM over WebSocket
   -> PyAV decode and 25 FPS resampling on CPU
-  -> MediaPipe single-face landmarks on CPU
-  -> smoothed 96 x 96 grayscale mouth ROI on CPU
-  -> fake, NumPy prototype, or PyTorch temporal classifier
-  -> confidence + top-1 margin rejection
+  -> MediaPipe single-face detection and landmarks on CPU
+  -> alignment and 96 x 96 grayscale mouth crop on CPU
+  -> fixed-phrase Torch model on AMD Radeon / ROCm
+  -> probability + phrase-centroid distance acceptance
+  -> exact phrase text and intent from the checkpoint catalog
   -> command.result
   -> agent.result (execute, ignore, or reject)
 ```
 
 FastAPI creates a short-lived session at `POST /api/sessions` and accepts the
-clip at `/ws/{sessionId}`. Only configured WebSocket origins are accepted. The
-Torch model uses four Conformer-style blocks with feed-forward layers,
-self-attention, depthwise temporal convolution, attentive pooling, and a linear
-classifier. PyTorch calls a ROCm device `cuda:0`; this name does not imply an
-NVIDIA CUDA runtime when `torch.version.hip` is set.
+clip at `/ws/{sessionId}`. Health endpoints are available at `/health/live` and
+`/health/ready`. WebSocket origins are restricted by `ALLOWED_ORIGINS`.
 
-Health endpoints are available at `/health/live` and `/health/ready`.
+The Torch model downsamples each mouth frame to 16 x 16, combines appearance
+with the signed adjacent-frame difference, projects the result to 64 features,
+and applies two depthwise-separable temporal blocks. Attentive pooling feeds a
+normalized embedding and a dynamic phrase head. The implementation enforces a
+trainable-parameter cap below 150,000.
 
-## AMD Radeon and ROCm
+The checkpoint stores one calibrated minimum probability and a maximum cosine
+distance for each phrase's training centroid. Both gates must pass. Top-1 margin
+is reported only as a diagnostic; it is not an acceptance gate for the
+fixed-phrase Torch model. Rejected output has intent `UNKNOWN`, contains no
+matched phrase text, and cannot execute.
 
-The intended hackathon path keeps video decoding, face detection, cropping, and
-NumPy feature preparation on CPU. The temporal PyTorch classifier runs on AMD
-Radeon through ROCm. This split keeps ordinary video work off the accelerator
-and uses Radeon for the learned temporal classifier.
+## Requirements
 
-Current source has two separate safeguards and one limitation:
+Use Python 3.11. Runtime dependencies and their exact version ranges are in
+[`requirements.txt`](requirements.txt):
 
-- `scripts/setup_amd_real.sh` and `scripts/start_real_rocm.sh` stop if
-  `torch.version.hip` is absent or `torch.cuda.is_available()` is false.
-- With `COMMAND_BACKEND=torch`, those scripts also require an existing
-  `COMMAND_CLASSIFIER_CHECKPOINT`.
-- `TorchCommandClassifierBackend` itself still chooses `cuda:0` when PyTorch
-  reports an accelerator and otherwise falls back to CPU. Direct `uvicorn`
-  startup therefore does not provide an application-level GPU-only guarantee.
+- FastAPI, Uvicorn, Pydantic, and pydantic-settings for the service;
+- NumPy, OpenCV, PyAV, MediaPipe, and Pillow for CPU video preprocessing;
+- orjson and python-multipart for API serialization and uploads.
 
-For the final evidence run, capture the Python path, PyTorch version,
-`torch.version.hip`, device availability, selected backend, checkpoint path, and
-real command results. The run and its evidence are pending.
+[`requirements-dev.txt`](requirements-dev.txt) adds pytest, browser-test tools,
+Ruff, ReportLab, pypdf, pdfplumber, and QR-code support. `package.json` records
+the Playwright dependency.
 
-## Requirements and Dependencies
+PyTorch is intentionally not installed from `requirements.txt`. The AMD machine
+must supply a PyTorch build compatible with its ROCm image. Training and the
+production Torch backend fail closed unless `torch.version.hip` is non-empty,
+`torch.cuda.is_available()` is true, and `cuda:0` is visible. PyTorch uses the
+name `cuda:0` for its ROCm device namespace; this does not mean an NVIDIA runtime
+is in use.
 
-Use Python 3.11 for the documented development environment. Runtime packages in
-`requirements.txt` are exactly:
-
-```text
-fastapi>=0.141.1,<1.0.0
-uvicorn[standard]>=0.52.0,<1.0.0
-pydantic>=2.13.4,<3.0.0
-pydantic-settings>=2.14.2,<3.0.0
-numpy>=1.26.4,<2.0.0
-opencv-python-headless>=4.10.0,<4.11.0
-mediapipe==0.10.14
-python-multipart>=0.0.32,<1.0.0
-orjson>=3.11.9,<4.0.0
-Pillow==10.4.0
-av>=16.0.0,<17.0.0
-```
-
-`requirements-dev.txt` adds `pytest`, `pytest-asyncio`, `httpx`, `httpx2`,
-`websockets`, `ruff`, and `playwright` in the version ranges recorded in that
-file. `package.json` adds `@playwright/test` for browser tests.
-
-PyTorch is deliberately not pinned in `requirements.txt`. The Radeon environment
-must provide a ROCm-compatible PyTorch build. Check compatibility against the
-installed ROCm image before training or inference.
-
-The browser needs camera permission, `getUserMedia`, `MediaRecorder`, WebSocket,
-and WebM recording support. Use a current Chromium-based browser. Camera access
-requires a secure context; `http://localhost` is allowed for local development,
-while a remote browser should use HTTPS. The current recorder prefers VP9 and
-falls back to the browser's default WebM encoder.
-
-Local installation:
+Local development setup:
 
 ```bash
 cd /path/to/silent-vision
@@ -137,163 +99,151 @@ python -m pip install -r requirements-dev.txt
 npm install
 ```
 
-## Prototype Calibration
+A current Chromium-based browser is recommended. Camera access requires a
+secure context; `http://localhost` is allowed for local work, while a remote
+browser should use HTTPS.
 
-Prototype mode is for calibration and development, not Radeon classifier
-evidence. Start it explicitly:
+## 1. Record Phrase Samples
+
+Prototype mode is an explicit recording and data-inspection mode. It is not the
+official classifier demo. On the Radeon workspace, start it with:
 
 ```bash
-export COMMAND_BACKEND=prototype
+cd /path/to/silent-vision
 export PERSISTENCE_ROOT=/workspace/persistent/silent-vision
-export ALLOWED_ORIGINS=http://localhost:8000
-uvicorn backend.main:app --host 127.0.0.1 --port 8000
+export COMMAND_BACKEND=prototype
+export ALLOWED_ORIGINS='*'
+bash scripts/amd_real_oneclick.sh
 ```
 
-Open `http://localhost:8000`. In the Calibration panel, choose the correct
-intent and language, enter the phrase, and click `Save Sample`. Record 5-10
-correctly labeled samples per intent, with small natural changes in pace and
-head position. Include `UNKNOWN` and `CHAT_OTHER` examples instead of treating
-every mouth movement as an executable command. Useful sample phrases include
-`你好，请帮我打开灯` and `hello, please turn on the light`.
+Open the emitted local or tunnel URL. In the Calibration panel, save independent
+takes under `profileId=global` and enter the exact catalog phrase. Use the mapped
+intent shown in the table above. Save unrelated clips with source intent
+`UNKNOWN`; they are used only for rejection calibration and final evaluation.
 
-The browser writes to `profileId=global`. Inspect sample counts with:
+The official dataset gate requires at least 15 independent takes per registered
+phrase: 10 training, 2 threshold-calibration, and 3 final-evaluation clips. It
+also requires at least 15 unrelated clips: 5 for calibration and 10 for final
+evaluation. Duplicate sample IDs or duplicate mouth-array hashes are excluded.
+Source recordings and metadata are never rewritten by the manifest builder.
+
+Inspect the stored profile:
 
 ```bash
 /opt/venv/bin/python scripts/inspect_prototypes.py \
   --root /workspace/persistent/silent-vision
 ```
 
-## Train the Command Classifier
+## 2. Build Immutable Manifests
 
-The current manifest helper creates a starter JSONL template:
-
-```bash
-/opt/venv/bin/python scripts/record_command_manifest.py \
-  --output /workspace/persistent/silent-vision/commands/manifest.jsonl
-```
-
-Its rows contain blank video paths, so they are not trainable as written. Add a
-real `mouth_roi_npy` path and correct intent to each training row, for example:
-
-```json
-{"intent":"LIGHT_ON","mouth_roi_npy":"/workspace/persistent/silent-vision/profiles/global/LIGHT_ON/<sample-id>/mouth_roi.npy"}
-```
-
-The planned submission workflow names a scanner
-`scripts/build_command_manifest.py`. That file is not present in this checkout;
-do not present it as a working command until it is implemented. The current
-working helper is `scripts/record_command_manifest.py`.
-
-On the Radeon environment, verify ROCm first, then train:
+Build the five disjoint manifests and their inventory from the global profile:
 
 ```bash
-/opt/venv/bin/python - <<'PY'
-import torch
-print("torch:", torch.__version__)
-print("HIP:", torch.version.hip)
-print("accelerator available:", torch.cuda.is_available())
-if torch.version.hip is None or not torch.cuda.is_available():
-    raise SystemExit("ROCm PyTorch is required for the Radeon training run")
-PY
+/opt/venv/bin/python scripts/build_command_manifest.py \
+  --profile-root /workspace/persistent/silent-vision/profiles \
+  --catalog command/phrase_catalog.json \
+  --output-dir /workspace/persistent/silent-vision/manifests \
+  --seed 17
+```
+
+The command fails when the official sample minimums are not met. For a local or
+Radeon execution smoke only, append `--allow-small-dataset`. The resulting
+inventory records `evidentiary: false` and must not support performance claims.
+
+The catalog owns the corrected phrase label and intent. The source intent is
+retained in each manifest row as `source_intent`, so a mislabeled recording can
+be audited without editing the source files.
+
+## 3. Train and Calibrate on ROCm
+
+Training uses only `train.jsonl` plus the two calibration partitions. It refuses
+evaluation manifests and has no CPU classifier fallback.
+
+```bash
+mkdir -p /workspace/persistent/silent-vision/models \
+  /workspace/persistent/silent-vision/reports
 
 /opt/venv/bin/python scripts/train_command_classifier.py \
-  --manifest /workspace/persistent/silent-vision/commands/manifest.jsonl \
-  --output /workspace/persistent/silent-vision/models/command_classifier.pt \
-  --epochs 20
+  --catalog command/phrase_catalog.json \
+  --inventory /workspace/persistent/silent-vision/manifests/inventory.json \
+  --train-manifest /workspace/persistent/silent-vision/manifests/train.jsonl \
+  --calibration-known /workspace/persistent/silent-vision/manifests/calibration-known.jsonl \
+  --calibration-unknown /workspace/persistent/silent-vision/manifests/calibration-unknown.jsonl \
+  --output /workspace/persistent/silent-vision/models/fixed-phrase.pt \
+  --run-summary /workspace/persistent/silent-vision/reports/training-run.json \
+  --epochs 80 \
+  --seed 17
 ```
 
-The training script currently uses `cuda:0` when PyTorch reports an accelerator
-and CPU otherwise. The preflight above is therefore required for an explicit
-Radeon run. Training uses every manifest row with a valid `mouth_roi_npy`; the
-current script does not create a train/validation split.
+For an inventory created with `--allow-small-dataset`, a shorter epoch count may
+be used to check execution. That checkpoint and run summary remain
+non-evidentiary.
 
-Validate with a separate, manually held-out manifest:
+## 4. Run the Frozen Final Evaluation
+
+After training and calibration have frozen the checkpoint thresholds, evaluate
+only the untouched final partitions:
 
 ```bash
 /opt/venv/bin/python scripts/validate_command_classifier.py \
-  --manifest /workspace/persistent/silent-vision/commands/validation.jsonl \
-  --checkpoint /workspace/persistent/silent-vision/models/command_classifier.pt \
-  --threshold 0.85 \
-  --margin 0.20
+  --checkpoint /workspace/persistent/silent-vision/models/fixed-phrase.pt \
+  --known-manifest /workspace/persistent/silent-vision/manifests/evaluation-known.jsonl \
+  --unknown-manifest /workspace/persistent/silent-vision/manifests/evaluation-unknown.jsonl \
+  --output /workspace/persistent/silent-vision/reports/final-evaluation.json
 ```
 
-Save the terminal output for the final submission. No validation result has yet
-been recorded in this repository.
+The JSON report records counts and denominators for phrase accuracy,
+mapped-intent accuracy, known acceptance, accepted-phrase accuracy, and unknown
+false acceptance/rejection. It also records the effective threshold source,
+checkpoint hash, manifest hashes, backend, and device. Do not tune thresholds on
+these final partitions.
 
-## GPU-Only Startup
+Run one checkpoint-backed mouth-ROI clip with:
 
-This heading describes the explicit Radeon demo configuration. It is not a
-claim that every application entry point rejects CPU fallback.
+```bash
+/opt/venv/bin/python scripts/infer_command_clip.py \
+  --checkpoint /workspace/persistent/silent-vision/models/fixed-phrase.pt \
+  --mouth-roi /absolute/path/to/mouth_roi.npy
+```
 
-On an AMD Radeon machine with a ROCm PyTorch environment at
-`/opt/venv/bin/python`, start from the root of an ordinary clone:
+## 5. Start the Official Radeon Demo
+
+The official launchers default to the Torch backend and stop before startup when
+the ROCm device or phrase checkpoint is unavailable:
 
 ```bash
 cd /path/to/silent-vision
-```
-
-For the event-hosted Radeon workspace example, the repository root is:
-
-```bash
-cd /workspace/template-repos/template-907/repo
-```
-
-Then configure and start the explicit Radeon path:
-
-```bash
 export PERSISTENCE_ROOT=/workspace/persistent/silent-vision
 export COMMAND_BACKEND=torch
-export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/command_classifier.pt
+export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/fixed-phrase.pt
 export ALLOWED_ORIGINS='*'
 bash scripts/amd_real_oneclick.sh
 ```
 
-Although the real scripts currently default to `prototype`, the explicit
-`COMMAND_BACKEND=torch` export above takes precedence. Setup upgrades the Python
-requirements, checks ROCm, checks the checkpoint, and then starts Uvicorn on
-`127.0.0.1:8000`. Do not use the default prototype backend as Radeon classifier
-evidence.
-
-In a second Radeon terminal, expose the local server if the event environment
-provides `rc-tunnel`:
+In a second Radeon terminal, expose port 8000 if the event image provides
+`rc-tunnel`:
 
 ```bash
 $HOME/.local/bin/rc-tunnel expose --port 8000
 ```
 
-Open the emitted HTTPS URL in the browser that has the camera. The real scripts
-set permissive origins by default for the tunnel; restrict `ALLOWED_ORIGINS` to
-the final public origin when possible.
+Restrict `ALLOWED_ORIGINS` to the final public origin when practical. The
+application itself does not provide authentication or TLS termination.
 
-## Persistent Storage
+For a checkpoint-backed ROCm smoke, provide one real mouth-ROI sample:
 
-The default root is `/workspace/persistent/silent-vision`:
-
-```text
-/workspace/persistent/silent-vision/
-├── profiles/global/<INTENT>/<sample-id>/
-│   ├── original.webm
-│   ├── mouth_roi.npy
-│   ├── embedding.npy
-│   ├── metadata.json
-│   ├── aligned_face_video.mp4    # only when DEBUG_DUMP_WINDOWS=true
-│   └── mouth_roi_video.mp4       # only when DEBUG_DUMP_WINDOWS=true
-├── models/
-│   └── command_classifier.pt
-├── commands/
-│   ├── manifest.jsonl
-│   └── validation.jsonl
-├── cache/torch/
-└── logs/command-runs/            # debug artifacts only when enabled
+```bash
+export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/fixed-phrase.pt
+export COMMAND_SMOKE_SAMPLE=/absolute/path/to/mouth_roi.npy
+bash scripts/smoke_rocm.sh
 ```
 
-Calibration intentionally persists the original WebM, derived arrays, and
-metadata. Model checkpoints and real recordings should stay out of Git.
+This smoke proves that the guarded Torch path executes on `cuda:0`; it does not
+replace the untouched final-evaluation report.
 
-## Local Fake Mode
+## Other Development Modes
 
-Fake mode tests the HTTP, WebSocket, vision, decision, and agent-result flow
-without a real face detector or learned checkpoint:
+Fake mode is for deterministic API and browser-flow tests only:
 
 ```bash
 export COMMAND_BACKEND=fake
@@ -301,85 +251,68 @@ export ALLOWED_ORIGINS=http://localhost:8000
 .venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://localhost:8000`. Motion in the fake mouth frames can return
-`LIGHT_ON`; still input is rejected as `UNKNOWN`. Fake mode is not evidence of
-recognition quality or Radeon execution.
+Prototype mode compares saved examples and supports collection/debugging. It is
+not a fallback in the official Torch startup and is not Radeon classifier
+evidence.
 
-## Docker Notes
+## Persistent Artifacts
 
-`docker/Dockerfile` starts from `rocm/pytorch:latest`, installs
-`requirements.txt`, and runs Uvicorn. `docker/docker-compose.yml` passes
-`/dev/kfd` and `/dev/dri`, mounts the persistent root, and defaults to the
-prototype backend.
+```text
+/workspace/persistent/silent-vision/
+|-- profiles/global/<SOURCE_INTENT>/<sample-id>/
+|   |-- original.webm
+|   |-- mouth_roi.npy
+|   |-- embedding.npy
+|   `-- metadata.json
+|-- manifests/
+|   |-- inventory.json
+|   |-- train.jsonl
+|   |-- calibration-known.jsonl
+|   |-- calibration-unknown.jsonl
+|   |-- evaluation-known.jsonl
+|   `-- evaluation-unknown.jsonl
+|-- models/fixed-phrase.pt
+|-- reports/training-run.json
+`-- reports/final-evaluation.json
+```
 
-Treat these files as deployment scaffolding, not a pinned release image. The
-base image uses the mutable `latest` tag, the compose backend is not Torch, and
-the container command currently binds Uvicorn to `127.0.0.1`. Confirm host
-reachability, ROCm visibility, origin policy, and checkpoint selection in the
-target environment before recording evidence.
+Recordings, checkpoints, and private reports remain outside Git. The contest
+bundle contains the source, phrase catalog, README, generated project profile,
+poster, and demo script, while excluding those private artifacts.
 
 ## Verification
 
-The documentation/submission pass uses focused checks for the changed generator,
-bundle builder, and regression tests:
+Local tests that require Torch skip when Torch is not installed:
 
 ```bash
-.venv/bin/ruff check scripts/generate_submission_assets.py scripts/build_contest_bundle.py tests/test_submission_docs.py tests/test_contest_bundle.py
-.venv/bin/pytest tests/test_submission_docs.py tests/test_contest_bundle.py --noconftest -q
+.venv/bin/python -m pytest -q
 ```
 
-These focused checks do not imply that the whole repository is lint-clean. A
-full `.venv/bin/ruff check .` has 24 known pre-existing findings. Runtime and
-full-suite verification were deferred and are not part of this documentation
-pass.
-
-For a separate runtime verification pass, the helper below runs the fast
-fake-mode tests and then starts the local server:
+Generate and verify the submission assets:
 
 ```bash
-./scripts/smoke_fake.sh
+.venv/bin/python scripts/generate_submission_assets.py
+.venv/bin/python -m pytest -q tests/test_deployment_files.py tests/test_submission_docs.py tests/test_contest_bundle.py
+.venv/bin/python scripts/build_contest_bundle.py
 ```
-
-On the Radeon host, with the explicit Torch environment already exported, run:
-
-```bash
-COMMAND_BACKEND=torch \
-COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/command_classifier.pt \
-./scripts/smoke_rocm.sh
-```
-
-The ROCm smoke script checks the HIP runtime and accelerator visibility before
-running deployment, prototype, and classifier tests. A passing smoke script does
-not replace held-out classifier validation or a recorded end-to-end demo.
 
 ## Privacy and Limitations
 
-- Browser capture requests video only; `audio: false` prevents microphone
-  capture by this application.
-- Ordinary command clips are processed from memory and a temporary decode file.
-  They persist only when `DEBUG_DUMP_WINDOWS=true`.
-- Calibration always stores the original video, mouth arrays, embedding, and
-  metadata under the global profile. Delete these files according to the
-  operator's retention policy; no consent or retention UI is included.
-- Debug metadata can include local artifact paths and timing data. Do not enable
-  debug dumps on a public service without access controls.
-- The repository has no authentication, device authorization, or TLS server.
-  The tunnel provides transport access but is not an application security layer.
-- Recognition is closed-set and sensitive to camera angle, lighting, occlusion,
-  speaking style, sample quality, and the configured thresholds.
-- The current Torch path has a CPU fallback outside the ROCm startup scripts.
-- The current agent returns structured decisions only. No light, door, recording,
-  or capture action is implemented.
-- No measured accuracy, latency, throughput, or memory result is published.
+- Browser capture requests video only; this application sets `audio: false`.
+- Normal command clips are processed from memory and a temporary decode file.
+- Prototype recording mode persists the original video and derived arrays. The
+  repository has no consent or retention UI; operators must define a policy.
+- Recognition is personalized and closed-set. Camera angle, lighting,
+  occlusion, speaking style, and sample quality can change results.
+- Probability and centroid-distance rejection is a calibrated heuristic, not a
+  guarantee that every unrelated phrase will be rejected.
+- The current source returns structured decisions only and contains no physical
+  device or creator-tool integration.
+- No performance figure is published until the official final-evaluation report
+  exists.
 
 ## Submission Materials
 
-The editable and generated submission materials are indexed in
-[`submission/README.md`](submission/README.md). Source copy lives under
-`docs/submission/` as reviewed reference copy; the generator remains the
-canonical generated-artifact copy/layout source. The generated project profile
-PDF and poster PDF/PNG are complete. The Radeon evidence, final checkpoint,
-held-out validation, Creator Mode actions, demo video, and video URL remain
-pending.
-
-Required pull request title: `Track 1, Jixin Fang, Silent Vision`.
+English submission materials are indexed in
+[`submission/README.md`](submission/README.md). The required pull request title
+is `Track 1, Jixin Fang, Silent Vision`.

@@ -1,39 +1,46 @@
 # Silent Vision Demo Video Script
 
-Status: pending recording on the AMD Radeon environment. Target length: 3-5
-minutes. Do not publish this as a completed demo until the real checkpoint,
-Creator Mode, downloadable artifact, and rejection gate have been verified in
-one recording.
+Status: pending recording on AMD Radeon. Target length: 3-5 minutes.
 
-## Recording checklist
+This script demonstrates the application that exists in the repository: one
+silent clip, one fixed-phrase decision, and an explicit rejection path. It does
+not stage a physical-device or content-creation action.
 
-- Use one continuous screen recording that shows the terminal and browser.
-- Use the real Radeon environment and final classifier checkpoint.
-- Do not paste simulated GPU output or edit in benchmark values.
-- Verify that Creator Mode and the three creator intents exist in the checked-out
-  source before recording. They are not present in the current checkout.
-- Prepare one accepted creator command and one unknown or low-confidence command.
-- Keep the browser's result JSON and downloadable WebM or PNG visible.
-- Add the final video URL to `submission/README.md` and
+## Recording Checklist
+
+- Record the real terminal and browser in one continuous take.
+- Show `/opt/venv/bin/python`, the PyTorch version, `torch.version.hip`,
+  accelerator availability, and the Radeon device name.
+- Start with `COMMAND_BACKEND=torch` and the actual checkpoint path.
+- Show whether the inventory and checkpoint are official or were created with
+  `--allow-small-dataset`.
+- If the artifacts are non-evidentiary, say that they prove execution only and
+  show no accuracy claim.
+- Use one registered phrase and one unrelated or deliberately ambiguous clip.
+- Keep the returned phrase metadata, acceptance decision, and agent action
+  visible.
+- Do not paste simulated GPU output or edit benchmark values into the video.
+- Add the final URL to `submission/README.md` and
   `submission/pull-request-description.md` after upload.
 
-## 0:00-0:35 — Problem and current boundary
+## 0:00-0:40 - Problem and Scope
 
-**On screen:** Repository README, then the browser.
+**On screen:** Repository README, phrase catalog, then the browser.
 
 **Say:**
 
-“Silent Vision is a closed-set visual command interface for situations where
-audio is unavailable, unreliable, or unwanted. The browser records a short
-camera clip with audio disabled. The server reads the mouth-region sequence and
-returns a bounded intent with confidence, margin, and an explicit acceptance
-decision. This is not open-ended transcription. The current repository also
-keeps external effects separate from recognition, so a structured result is not
-presented as proof that a light or door changed.”
+“Silent Vision is a personalized fixed-phrase visual classifier for situations
+where audio is unavailable, unreliable, or unwanted. The browser records a
+short camera clip with audio disabled. This is not open-vocabulary lipreading.
+The model chooses between registered phrase IDs, and accepted text and intent
+come from this catalog. The current source returns a structured decision; it
+does not operate a physical device or content-creation tool.”
 
-## 0:35-1:20 — Terminal proof and server startup
+**Show:** `command/phrase_catalog.json`, including both registered phrases.
 
-**On screen:** Run the commands; do not use a prepared screenshot.
+## 0:40-1:25 - Radeon Environment and Startup
+
+**On screen:** Run these commands rather than using a prepared screenshot.
 
 ```bash
 /opt/venv/bin/python - <<'PY'
@@ -44,68 +51,83 @@ print("available:", torch.cuda.is_available())
 print("device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none")
 PY
 
-export COMMAND_BACKEND=torch
-export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/command_classifier.pt
 export PERSISTENCE_ROOT=/workspace/persistent/silent-vision
+export COMMAND_BACKEND=torch
+export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/fixed-phrase.pt
+export ALLOWED_ORIGINS='*'
 bash scripts/start_real_rocm.sh
 ```
 
 **Say:**
 
-“This is the real Python and PyTorch environment. The HIP value and Radeon
-device prove that this PyTorch process is using ROCm. I am explicitly selecting
-the Torch backend and the recorded checkpoint. The startup guard stops if ROCm
-is missing or the checkpoint does not exist. Video decode, face landmarks, and
-mouth cropping run on CPU. The temporal PyTorch classifier is the Radeon stage.”
+“This is the Python and PyTorch environment used by the server. A non-empty HIP
+value and the displayed Radeon device identify the ROCm build. The startup guard
+stops when ROCm or the phrase checkpoint is missing. PyAV decode, MediaPipe face
+detection, alignment, and mouth cropping run on CPU. The fixed-phrase Torch
+model runs on the Radeon device shown as `cuda:0`.”
 
-## 1:20-2:40 — Creator Mode and a real artifact
+## 1:25-2:20 - Accepted Exact Phrase
 
-**Recording gate:** Perform this section only after Creator Mode is implemented
-and tested. The current checkout cannot produce this artifact.
+**On screen:** Open the HTTPS tunnel URL. Record one registered phrase. Keep the
+result JSON and visible phrase result in frame.
 
-**On screen:** Open the HTTPS tunnel URL, enter Creator Mode, and show the live
-preview. Recognize `START_RECORDING`, record several seconds, then recognize
-`STOP_RECORDING`. Open or download the resulting WebM. If the final demo uses
-`CAPTURE_FRAME` instead, download and open the PNG.
+Suggested phrase: `你好，请帮我打开灯`.
 
 **Say:**
 
-“Creator Mode keeps one camera stream active. I will mouth ‘start recording.’
-The short command clip goes to the backend, and only an accepted creator intent
-reaches the browser controller. The creator recording is now active. I will
-mouth ‘stop recording.’ The accepted result stops the recorder and exposes this
-WebM download. Here is the real file created in the browser. The command clip
-and the creator recording are separate media operations over the same preview
-stream.”
+“I am recording one registered phrase with audio disabled. The model predicts a
+stable phrase ID and a normalized embedding. Acceptance requires both the
+checkpoint probability threshold and this phrase's maximum distance from its
+training centroid. The text on screen is copied exactly from the checkpoint
+catalog, and the catalog maps it to `LIGHT_ON`.”
 
-**Show:** The `command.result`, the `agent.result`, and the downloaded artifact.
-Point out the backend, confidence, margin, selected device metadata if available,
-and recorded inference timing without calling it a benchmark.
+**Show:** `backend: "torch"`, accepted status, `phraseId`, exact displayed text,
+mapped intent, `openSetDistance`, threshold values, and
+`thresholdSource: "checkpoint"`. Margin may be visible, but describe it only as
+a diagnostic.
 
-## 2:40-3:30 — Rejection safety
+If the recorded checkpoint does not accept the live clip, do not retry until a
+desired result appears and call that evaluation. Explain the failure and use a
+known checkpoint-backed sample for an execution smoke if needed.
 
-**On screen:** Start another recognition attempt. Use an out-of-set phrase or a
-deliberately ambiguous sample. Keep Creator Mode status and the artifact area in
-view.
+## 2:20-3:05 - Rejection Path
 
-**Say:**
-
-“Now I will give a command that should not pass the confidence and margin gates.
-The backend returns `UNKNOWN` or a rejected result. The agent action is `reject`,
-and the browser controller receives no creator command. No new recording starts,
-no still is captured, and the previous artifact is unchanged. This rejection
-path is part of the product behavior, not an error hidden from the user.”
-
-## 3:30-4:10 — Close
-
-**On screen:** Return to the README architecture and repository link.
+**On screen:** Record an unrelated phrase or a deliberately ambiguous clip.
 
 **Say:**
 
-“Silent Vision turns a deliberate silent clip into a small, inspectable command
-decision. CPU preprocessing feeds a temporal classifier running through PyTorch
-on AMD Radeon and ROCm. Uncertain commands stop at the safety gate. The code,
-setup instructions, training commands, submission sources, and limitations are
-available at github.com/fangjixin/silent-vision.”
+“This clip is not one of the registered phrases. When either probability or
+phrase-centroid distance fails, the public result becomes `UNKNOWN`. It contains
+no matched phrase text, the agent action is `reject`, and no executable route is
+available. This is calibrated heuristic rejection, not a guarantee for every
+possible unseen phrase.”
 
-Stop the recording only after the repository URL is legible.
+**Show:** rejected status, `UNKNOWN`, rejection reason, and the agent action.
+
+## 3:05-3:45 - Evidence Boundary and Close
+
+**On screen:** Show `inventory.json`, the training run summary, and final
+evaluation report if official artifacts exist; otherwise show the
+`evidentiary: false` field and do not show performance figures.
+
+**Say for an official run:**
+
+“The manifest builder hashes immutable recordings and keeps training,
+calibration, and final evaluation separate. Thresholds were frozen before this
+final report. The report includes metric numerators and denominators, partition
+hashes, checkpoint hash, backend, and device.”
+
+**Say for a small-data smoke:**
+
+“This inventory is explicitly non-evidentiary. The run proves that manifest
+building, Radeon training, checkpoint loading, and inference execute end to end.
+It does not support an accuracy or rejection-rate claim.”
+
+**Close:**
+
+“Silent Vision turns a deliberate silent clip into a small, inspectable phrase
+decision. CPU preprocessing feeds a fixed-phrase classifier on AMD Radeon and
+ROCm. Uncertain clips stop at the rejection boundary. The source and submission
+materials are available at github.com/fangjixin/silent-vision.”
+
+Stop only after the repository URL is readable.

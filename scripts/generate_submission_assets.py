@@ -18,6 +18,8 @@ from qrcode.constants import ERROR_CORRECT_M
 from reportlab.lib.colors import Color, HexColor
 from reportlab.lib.pagesizes import A3, A4
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
@@ -28,14 +30,17 @@ SUBMISSION = ROOT / "submission"
 PDF_OUTPUT = ROOT / "output/pdf"
 REPOSITORY_URL = "https://github.com/fangjixin/silent-vision"
 PROFILE_EVIDENCE_STATUS = (
-    "Pending: final Radeon checkpoint, held-out validation report, selected "
-    "environment record, Creator Mode actions, and the 3-5 minute end-to-end "
-    "video. No accuracy or latency number is published."
+    "Pending: the official Radeon training run, final evaluation report, and "
+    "recorded demonstration. Small-data smoke artifacts are non-evidentiary, "
+    "and no accuracy or latency figure is published."
 )
 POSTER_EVIDENCE_STATUS = (
-    "Final Radeon run, trained checkpoint, validation evidence, Creator Mode "
-    "actions, and recorded demo are pending."
+    "ROCm execution and final evaluation remain to be recorded. Small-data "
+    "smoke proves pipeline execution only."
 )
+
+pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+CJK_FONT = "STSong-Light"
 
 CHARCOAL = HexColor("#101418")
 OFF_WHITE = HexColor("#F4F1EA")
@@ -119,6 +124,7 @@ def _card(
     accent: Color = RADEON_RED,
     fill: Color = WHITE,
     title_size: float = 13,
+    body_font: str = "Helvetica",
     body_size: float = 9.5,
     leading: float = 13.5,
 ) -> None:
@@ -136,6 +142,7 @@ def _card(
         x + 14,
         y + height - 50,
         width - 28,
+        font=body_font,
         size=body_size,
         leading=leading,
         color=MUTED,
@@ -190,18 +197,19 @@ def _profile_page_one(pdf: canvas.Canvas) -> None:
         pdf,
         1,
         "Silent Vision",
-        "Closed-set visual command recognition from a short, silent camera clip.",
+        "Personalized fixed-phrase recognition from a short camera clip with audio disabled.",
     )
     width, height = A4
     _label(pdf, "Project profile", 42, height - 144)
-    pdf.setFont("Helvetica-Bold", 37)
+    pdf.setFont("Helvetica-Bold", 35)
     pdf.setFillColor(CHARCOAL)
-    pdf.drawString(42, height - 192, "Silent control when")
+    pdf.drawString(42, height - 192, "One silent clip.")
     pdf.setFillColor(RADEON_RED)
-    pdf.drawString(42, height - 235, "audio is not an option.")
+    pdf.setFont("Helvetica-Bold", 31)
+    pdf.drawString(42, height - 235, "One inspectable phrase decision.")
     _paragraph(
         pdf,
-        "The browser records a 2-5 second WebM clip without audio. The backend extracts a mouth-region sequence, checks confidence and margin, and returns a structured command decision plus an agent result.",
+        "Silent Vision recognizes a small catalog of personalized fixed phrases. It is not open-vocabulary lipreading. Exact accepted text and intent come from the registered catalog.",
         42,
         height - 276,
         width - 84,
@@ -215,8 +223,10 @@ def _profile_page_one(pdf: canvas.Canvas) -> None:
         355,
         card_width,
         126,
-        "Bounded vocabulary",
-        "LIGHT_ON, LIGHT_OFF, OPEN_DOOR, CHAT_OTHER, and UNKNOWN. Silent Vision does not claim open-ended transcription.",
+        "zh_light_on_hello",
+        "你好，请帮我打开灯  ->  LIGHT_ON",
+        body_font=CJK_FONT,
+        body_size=10.3,
     )
     _card(
         pdf,
@@ -224,15 +234,17 @@ def _profile_page_one(pdf: canvas.Canvas) -> None:
         355,
         card_width,
         126,
-        "Inspectable result",
-        "Candidates, confidence, margin, acceptance reason, and execute, ignore, or reject are returned as structured data.",
+        "zh_chat_meal",
+        "你吃饭了吗？  ->  CHAT_OTHER",
+        body_font=CJK_FONT,
+        body_size=10.3,
     )
     pdf.setFillColor(CHARCOAL)
     pdf.roundRect(42, 196, width - 84, 126, 10, fill=1, stroke=0)
     _label(pdf, "Current status", 60, 294, RADEON_RED)
     _paragraph(
         pdf,
-        "The proof of concept does not control a physical light or door and does not create a browser recording or still-image artifact. The intended demo uses CPU preprocessing and a PyTorch temporal classifier on AMD Radeon through ROCm.",
+        "CPU code decodes the video, detects and aligns one face, and crops the mouth. The fixed-phrase Torch model is designed to train and run on AMD Radeon through ROCm. The repository returns decisions; it does not operate an external tool or device.",
         60,
         268,
         width - 120,
@@ -245,7 +257,7 @@ def _profile_page_one(pdf: canvas.Canvas) -> None:
     _label(pdf, "Pending", 58, 144)
     _paragraph(
         pdf,
-        "Final Radeon checkpoint, validation evidence, and recorded demonstration.",
+        "Official Radeon training, untouched final evaluation, and recorded demonstration.",
         58,
         122,
         width - 116,
@@ -259,14 +271,14 @@ def _profile_page_two(pdf: canvas.Canvas) -> None:
         pdf,
         2,
         "Target users",
-        "A deliberate visual input for situations where audio is unavailable, unreliable, or unwanted.",
+        "A deliberate visual input for one user and a small registered phrase catalog.",
     )
     width, _ = A4
     cards = [
-        ("Accessible service", "A Deaf or hard-of-hearing person may need a visual alternative at a service desk."),
-        ("Creator studio - planned", "A creator may need hands-free control near a loud set. Browser recording and still capture are not implemented."),
-        ("Noisy worksite", "An operator may work around machinery where speech recognition is unreliable."),
-        ("Privacy-sensitive team", "A deliberate camera gesture can replace an always-listening microphone for a small command vocabulary."),
+        ("Creator control input", "Another application can map an accepted intent to a capture, cue, or editing action."),
+        ("Accessible service", "A small visual phrase set can supplement other communication channels at a service desk."),
+        ("Noisy workspace", "A deliberate visual command can help when microphone recognition is unreliable."),
+        ("Privacy-sensitive room", "The browser captures video without enabling the microphone or continuous audio recording."),
     ]
     card_width = (width - 96) / 2
     positions = [(42, 500), (54 + card_width, 500), (42, 328), (54 + card_width, 328)]
@@ -277,7 +289,7 @@ def _profile_page_two(pdf: canvas.Canvas) -> None:
     _label(pdf, "Product boundary", 60, 256)
     _paragraph(
         pdf,
-        'Silent Vision answers "which allowed command best fits this clip?" It does not claim a transcript. An integrator decides exactly which accepted labels may reach a downstream system.',
+        'Silent Vision answers "which registered phrase best fits this visible mouth sequence?" It does not claim a transcript or cross-speaker generalization. The current source implements recognition, not a downstream creator or device action.',
         60,
         228,
         width - 120,
@@ -287,7 +299,7 @@ def _profile_page_two(pdf: canvas.Canvas) -> None:
     )
     _paragraph(
         pdf,
-        "The current smart-space labels demonstrate that interface boundary. Creator-control actions remain planned work.",
+        "An integrator still defines allowed intents, confirmation rules, retention policy, and failure handling.",
         42,
         128,
         width - 84,
@@ -302,15 +314,15 @@ def _profile_page_three(pdf: canvas.Canvas) -> None:
         pdf,
         3,
         "Product workflow and safety",
-        "One short recording, one bounded decision, and explicit uncertainty handling.",
+        "One short recording, one catalog decision, and a fail-closed rejection boundary.",
     )
     width, _ = A4
     steps = [
-        ("01", "Start", "User grants camera access; audio remains off."),
-        ("02", "Prepare", "A countdown gives the user time to frame the command."),
-        ("03", "Record", "The browser records one WebM clip for up to five seconds."),
-        ("04", "Classify", "The server returns candidates, confidence, margin, and a reason."),
-        ("05", "Route", "The agent boundary returns execute, ignore, or reject."),
+        ("01", "Capture", "Record one 2-5 second WebM clip with audio disabled."),
+        ("02", "Preprocess", "Decode, detect one face, align, and crop the mouth on CPU."),
+        ("03", "Classify", "Run phrase logits and a normalized embedding on Radeon."),
+        ("04", "Gate", "Require checkpoint probability and phrase-centroid distance."),
+        ("05", "Route", "Return exact catalog text or reject the clip as UNKNOWN."),
     ]
     y = 615
     for index, title, body in steps:
@@ -332,7 +344,7 @@ def _profile_page_three(pdf: canvas.Canvas) -> None:
     _label(pdf, "Safety rule", 58, 150)
     _paragraph(
         pdf,
-        "Low confidence, a small top-1/top-2 margin, or an UNKNOWN prediction produces a rejection. CHAT_OTHER can be recognized but non-executable.",
+        "Both calibrated gates must pass. Rejected output carries no matched phrase text and cannot execute. Top-1 margin is diagnostic only.",
         58,
         128,
         width - 116,
@@ -346,16 +358,16 @@ def _profile_page_four(pdf: canvas.Canvas) -> None:
         pdf,
         4,
         "System architecture",
-        "A CPU media pipeline feeds interchangeable command backends with one decision schema.",
+        "CPU media preprocessing feeds one fixed-phrase model on AMD Radeon through ROCm.",
     )
     width, _ = A4
     box_width = 112
     x_values = [42, 173, 304, 435]
     stages = [
         ("Browser", "WebM, audio off"),
-        ("FastAPI", "Session + WebSocket"),
-        ("PyAV", "Decode at 25 FPS"),
-        ("MediaPipe", "96 x 96 mouth ROI"),
+        ("CPU decode", "PyAV at 25 FPS"),
+        ("CPU vision", "Face, align, crop"),
+        ("Radeon", "Torch on cuda:0"),
     ]
     for i, ((title, body), x) in enumerate(zip(stages, x_values)):
         _card(pdf, x, 540, box_width, 112, title, body, body_size=8.4, leading=11.5)
@@ -364,10 +376,10 @@ def _profile_page_four(pdf: canvas.Canvas) -> None:
     _arrow(pdf, width / 2, 530, width / 2, 490)
     pdf.setFillColor(CHARCOAL)
     pdf.roundRect(90, 419, width - 180, 70, 9, fill=1, stroke=0)
-    _label(pdf, "Shared temporal sequence", 108, 463)
+    _label(pdf, "Model input", 108, 463)
     _paragraph(
         pdf,
-        "One face, stabilized crop, grayscale mouth frames.",
+        "A [batch, time, 96, 96] grayscale mouth tensor.",
         108,
         440,
         width - 216,
@@ -378,9 +390,9 @@ def _profile_page_four(pdf: canvas.Canvas) -> None:
     branch_width = 148
     branch_x = [42, 224, 406]
     backends = [
-        ("Fake", "Deterministic local tests."),
-        ("Prototype", "NumPy embedding and saved global examples."),
-        ("Torch", "Temporal classifier for the intended ROCm path."),
+        ("Visual maps", "16 x 16 appearance plus signed adjacent-frame motion."),
+        ("Temporal model", "64-feature projection and two depthwise-separable blocks."),
+        ("Phrase outputs", "Attentive embedding, dynamic phrase head, catalog mapping."),
     ]
     for (title, body), x in zip(backends, branch_x):
         _arrow(pdf, width / 2, 410, x + branch_width / 2, 365)
@@ -388,10 +400,10 @@ def _profile_page_four(pdf: canvas.Canvas) -> None:
         _arrow(pdf, x + branch_width / 2, 247, width / 2, 212)
     pdf.setFillColor(PALE_RED)
     pdf.roundRect(90, 135, width - 180, 76, 9, fill=1, stroke=0)
-    _label(pdf, "CommandDecision", 108, 185)
+    _label(pdf, "Shared decision boundary", 108, 185)
     _paragraph(
         pdf,
-        "Candidates + confidence + margin + reason, then execute, ignore, or reject.",
+        "Probability + predicted phrase centroid distance, then exact catalog text or UNKNOWN.",
         108,
         160,
         width - 216,
@@ -405,14 +417,14 @@ def _profile_page_five(pdf: canvas.Canvas) -> None:
         pdf,
         5,
         "Model and algorithm",
-        "Prototype calibration and Torch classification share the same rejection boundary.",
+        "A small temporal model learns phrase classes and a calibrated embedding boundary.",
     )
     width, _ = A4
     pipeline = [
-        ("Frame features", "Mean, standard deviation, and motion values"),
-        ("4 temporal blocks", "Feed-forward, attention, depthwise 1D convolution, normalization"),
-        ("Attentive pooling", "Reduce the temporal sequence"),
-        ("Label classifier", "Score the bounded vocabulary"),
+        ("Appearance + motion", "Downsample to 16 x 16 and compute signed adjacent-frame differences"),
+        ("64-feature projection", "Learn a compact visual representation for every frame"),
+        ("2 temporal blocks", "Residual depthwise and pointwise one-dimensional convolutions"),
+        ("Embedding + phrase head", "Attentive pooling, normalized embedding, dynamic catalog classes"),
     ]
     y = 590
     for i, (title, body) in enumerate(pipeline):
@@ -438,8 +450,8 @@ def _profile_page_five(pdf: canvas.Canvas) -> None:
         130,
         card_width,
         112,
-        "Prototype mode",
-        "Normalizes an appearance-and-motion embedding, compares cosine similarity, then checks confidence and margin. It is a calibration tool, not Radeon evidence.",
+        "Acceptance",
+        "The top phrase must pass the global minimum probability and its maximum cosine distance from the training centroid. Margin is diagnostic only.",
         body_size=8.7,
         leading=12,
     )
@@ -449,8 +461,8 @@ def _profile_page_five(pdf: canvas.Canvas) -> None:
         130,
         card_width,
         112,
-        "Training status",
-        "Scripts exist for train, validate, and infer. Real mouth_roi_npy rows and a separate held-out validation manifest are still required.",
+        "Catalog boundary",
+        "UNKNOWN is not trained. Accepted exact text and mapped intent come from the checkpoint catalog; rejected output carries neither.",
         body_size=8.7,
         leading=12,
     )
@@ -461,7 +473,7 @@ def _profile_page_six(pdf: canvas.Canvas) -> None:
         pdf,
         6,
         "AMD Radeon and ROCm",
-        "Intended demo path: CPU preprocessing, then PyTorch temporal classification on Radeon.",
+        "The official path fails closed unless the fixed-phrase Torch model can use ROCm cuda:0.",
     )
     width, _ = A4
     card_width = (width - 96) / 2
@@ -472,7 +484,7 @@ def _profile_page_six(pdf: canvas.Canvas) -> None:
         card_width,
         148,
         "CPU preprocessing",
-        "PyAV decoding, MediaPipe detection, crop stabilization, and NumPy feature work stay on CPU.",
+        "PyAV decode, 25 FPS resampling, MediaPipe face detection, alignment, and 96 x 96 mouth cropping.",
         accent=MUTED,
     )
     _arrow(pdf, 54 + card_width - 8, 574, 54 + card_width + 8, 574)
@@ -483,13 +495,13 @@ def _profile_page_six(pdf: canvas.Canvas) -> None:
         card_width,
         148,
         "Radeon classification",
-        "PyTorch runs the temporal classifier through ROCm. The ROCm-backed device appears as cuda:0 and torch.version.hip records HIP availability.",
+        "PyTorch runs visual maps, temporal blocks, attentive embedding, phrase logits, and centroid comparison through ROCm.",
     )
     _label(pdf, "Reproduction guards", 42, 458)
     guards = [
-        "HIP must be present.",
-        "The accelerator must be available.",
-        "A Torch checkpoint path must be provided.",
+        "torch.version.hip must be non-empty.",
+        "cuda:0 must be visible and accept an allocation.",
+        "A non-empty fixed-phrase checkpoint must be provided.",
     ]
     y = 420
     for guard in guards:
@@ -512,7 +524,7 @@ def _profile_page_six(pdf: canvas.Canvas) -> None:
     _label(pdf, "Next steps", 42, 207)
     _paragraph(
         pdf,
-        "1. Finish a balanced dataset.   2. Build a real manifest.   3. Train on Radeon.   4. Evaluate a held-out manifest.   5. Save reports and record the demo.",
+        "1. Meet the official sample gate.   2. Build hashed manifests.   3. Train and calibrate on Radeon.   4. Evaluate untouched final partitions.   5. Record the demo.",
         42,
         180,
         width - 84,
@@ -581,10 +593,10 @@ def build_poster_pdf(output: Path) -> None:
     pdf.drawString(60, height - 137, "SILENT VISION")
     pdf.setFillColor(RADEON_RED)
     pdf.setFont("Helvetica-Bold", 29)
-    pdf.drawString(60, height - 184, "Silent control when audio is not an option.")
+    pdf.drawString(60, height - 184, "A fixed phrase. A silent clip. An inspectable decision.")
     _paragraph(
         pdf,
-        "Closed-set visual command recognition from a short camera clip.",
+        "Personalized visual command recognition - not open-vocabulary lipreading.",
         60,
         height - 220,
         width - 120,
@@ -592,18 +604,22 @@ def build_poster_pdf(output: Path) -> None:
         leading=22,
         color=MUTED,
     )
-    _label(pdf, "How it works", 60, height - 287)
-    step_titles = ["Record", "Decode", "Find mouth", "Classify", "Route"]
+    _label(pdf, "Registered phrases", 60, height - 257)
+    pdf.setFillColor(CHARCOAL)
+    pdf.setFont(CJK_FONT, 14)
+    pdf.drawString(60, height - 280, "你好，请帮我打开灯  |  你吃饭了吗？")
+    _label(pdf, "How it works", 60, height - 314)
+    step_titles = ["Record", "CPU decode", "CPU crop", "Radeon", "Gate + route"]
     step_bodies = [
         "2-5 second WebM; audio off",
-        "25 FPS on CPU",
-        "96 x 96 sequence",
-        "Intent + confidence + margin",
-        "Execute, ignore, or reject",
+        "PyAV at 25 FPS",
+        "Face, align, 96 x 96 mouth",
+        "Fixed-phrase Torch model",
+        "Probability + centroid distance",
     ]
     gap = 14
     step_width = (width - 120 - gap * 4) / 5
-    y = height - 472
+    y = height - 492
     for index, (title, body) in enumerate(zip(step_titles, step_bodies)):
         x = 60 + index * (step_width + gap)
         _card(
@@ -620,18 +636,18 @@ def build_poster_pdf(output: Path) -> None:
         )
         if index < 4:
             _arrow(pdf, x + step_width + 3, y + 72, x + step_width + gap - 3, y + 72)
-    _label(pdf, "Where it fits", 60, height - 522)
+    _label(pdf, "Where it fits", 60, height - 542)
     fit_width = (width - 148) / 3
     fits = [
-        ("Accessible service", "A visual alternative when spoken audio is not available."),
-        ("Creator studio - planned", "A future hands-free input for recording and still capture."),
-        ("Noisy worksite", "A small vocabulary when microphones are unreliable."),
+        ("Creator control input", "Another application can map an accepted intent to capture, cue, or editing actions."),
+        ("Accessible service", "A small visual phrase set can supplement other communication channels."),
+        ("Noisy or private room", "A command input when microphone recognition is unreliable or unwanted."),
     ]
     for index, (title, body) in enumerate(fits):
         _card(
             pdf,
             60 + index * (fit_width + 14),
-            height - 718,
+            height - 738,
             fit_width,
             155,
             title,
@@ -640,13 +656,13 @@ def build_poster_pdf(output: Path) -> None:
             leading=14,
         )
     pdf.setFillColor(CHARCOAL)
-    pdf.roundRect(60, height - 850, width - 120, 92, 12, fill=1, stroke=0)
-    _label(pdf, "Safety rule", 82, height - 790)
+    pdf.roundRect(60, height - 870, width - 120, 92, 12, fill=1, stroke=0)
+    _label(pdf, "Safety rule", 82, height - 810)
     _paragraph(
         pdf,
-        "Low-confidence and ambiguous commands do not execute.",
+        "Both calibrated gates must pass. Rejected clips cannot execute.",
         82,
-        height - 822,
+        height - 842,
         width - 164,
         font="Helvetica-Bold",
         size=18,
@@ -656,9 +672,9 @@ def build_poster_pdf(output: Path) -> None:
     _label(pdf, "AMD Radeon + ROCm", 60, height - 910)
     _paragraph(
         pdf,
-        "Intended demo path: CPU video preprocessing, then PyTorch temporal classification on AMD Radeon through ROCm.",
+        "CPU handles video and face preprocessing. ROCm PyTorch runs the learned fixed-phrase model on Radeon cuda:0.",
         60,
-        height - 944,
+        height - 940,
         width - 350,
         size=13,
         leading=19,
@@ -687,7 +703,7 @@ def build_poster_pdf(output: Path) -> None:
     pdf.drawString(60, 74, "github.com/fangjixin/silent-vision")
     pdf.setFillColor(MUTED)
     pdf.setFont("Helvetica", 8.5)
-    pdf.drawRightString(width - 60, 74, "Structured decisions, explicit uncertainty, no audio recording")
+    pdf.drawRightString(width - 60, 74, "Exact catalog text, explicit rejection, no audio capture")
     pdf.showPage()
     pdf.save()
 

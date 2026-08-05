@@ -14,11 +14,15 @@ def test_bundle_contains_complete_runtime_and_public_materials(tmp_path):
     copied = build_bundle(Path.cwd(), target)
 
     assert target.joinpath("backend/main.py").exists()
+    assert target.joinpath("command/phrase_catalog.json").exists()
     assert target.joinpath("frontend/websocket.js").exists()
     assert target.joinpath("README.md").exists()
     assert target.joinpath("docs/submission/project-profile-source.md").exists()
     assert target.joinpath("scripts/generate_submission_assets.py").exists()
     assert target.joinpath("submission/Silent-Vision-Project-Profile.pdf").exists()
+    assert target.joinpath("submission/Silent-Vision-Poster.pdf").exists()
+    assert target.joinpath("submission/Silent-Vision-Poster.png").exists()
+    assert target.joinpath("submission/demo-video-script.md").exists()
     assert copied
 
 
@@ -31,6 +35,7 @@ def test_bundle_excludes_internal_and_sensitive_paths(tmp_path):
     assert not target.joinpath(".env").exists()
     assert not target.joinpath("models").exists()
     assert not target.joinpath(".git").exists()
+    assert not any(path.suffix in {".pt", ".webm"} for path in target.rglob("*"))
     assert not any(path.is_symlink() for path in target.rglob("*"))
 
 

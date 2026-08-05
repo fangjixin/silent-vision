@@ -1,49 +1,60 @@
 # Silent Vision
 
 Copy contract: `scripts/generate_submission_assets.py` is the canonical copy and
-layout source for the generated poster. This file is reviewed reference copy and
-must be updated alongside high-risk copy or status changes in the generator.
+layout source for the generated poster. This reviewed source must be updated with
+the generator whenever technical claims or evidence status change.
 
-## Silent control when audio is not an option.
+## A fixed phrase. A silent clip. An inspectable decision.
 
-Closed-set visual command recognition from a short camera clip.
+Personalized visual command recognition from a 2-5 second camera clip with audio
+disabled. Silent Vision is closed-set, not open-vocabulary lipreading.
+
+### Registered phrases
+
+- `你好，请帮我打开灯` -> `LIGHT_ON`
+- `你吃饭了吗？` -> `CHAT_OTHER`
+
+The model predicts a stable phrase ID. Exact displayed text and intent come from
+the checkpoint catalog. `UNKNOWN` is a rejection result, not a trained class.
 
 ### How it works
 
-1. Record a 2-5 second silent WebM clip.
-2. Decode at 25 FPS on CPU.
-3. Find one face and extract a 96 x 96 mouth sequence.
-4. Classify a bounded intent and check confidence plus margin.
-5. Return a structured execute, ignore, or reject result.
+1. Record one silent WebM clip.
+2. Decode, detect, align, and crop the mouth on CPU.
+3. Run the fixed-phrase Torch model on AMD Radeon through ROCm.
+4. Require both probability and phrase-centroid distance to pass.
+5. Return an exact phrase decision or reject it as `UNKNOWN`.
 
-### Where it fits
+### Practical fit
+
+Creator control input
+
+A deliberate hands-free signal that another application can map to capture,
+cue, or editing actions.
 
 Accessible service
 
-A visual alternative when spoken audio is not available.
+A small visual phrase set that supplements other communication channels.
 
-Creator studio
+Noisy or private spaces
 
-A planned hands-free input for recording and still capture.
+A command input when a microphone is unreliable or continuous audio capture is
+unwanted.
 
-Noisy worksite
+### Safety boundary
 
-A small command vocabulary when microphones are unreliable.
-
-### Safety rule
-
-Low-confidence and ambiguous commands do not execute.
-
-The current repository returns structured decisions. It does not yet control a
-device or create a browser media artifact.
+Rejected clips carry no matched phrase text and cannot execute. The current
+repository returns structured decisions only; it does not control a device or
+content-creation application.
 
 ### AMD Radeon + ROCm
 
-Intended demo path: CPU video preprocessing, then PyTorch temporal
-classification on AMD Radeon through ROCm.
+CPU: video decode, face detection, alignment, and mouth crop.
 
-Final Radeon run, trained checkpoint, validation evidence, Creator Mode actions,
-and recorded demo are pending.
+Radeon: learned temporal model, phrase logits, and normalized embedding through
+ROCm PyTorch on `cuda:0`.
+
+ROCm execution and final evaluation remain to be recorded. Small-data smoke proves pipeline execution only.
 
 ### Source
 

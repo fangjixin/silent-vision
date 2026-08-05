@@ -1,30 +1,34 @@
-# Silent Vision Track 1 Submission Index
+# Silent Vision - Track 1 Submission Index
 
 Applicant: Jixin Fang
 
-Required pull request title: `Track 1, Jixin Fang, Silent Vision`
+Pull request title: `Track 1, Jixin Fang, Silent Vision`
 
 Source repository: <https://github.com/fangjixin/silent-vision>
 
-This index maps each submission requirement to a stable repository path. The
-generated profile and poster artifacts are complete. Radeon evidence, the final
-checkpoint, held-out validation, Creator Mode actions, the demo video, and its
-URL remain pending until the real artifacts exist.
+Silent Vision is a personalized fixed-phrase visual classifier. It returns exact
+catalog text and a mapped intent when both probability and phrase-centroid
+distance gates pass; otherwise it returns `UNKNOWN`. It is not open-vocabulary
+lipreading.
 
-| Requirement | Stable path | Status |
+| Requirement | Repository path | Status |
 | --- | --- | --- |
-| Reproduction and dependency guide | [`../README.md`](../README.md) | Source complete; Radeon evidence pending |
+| Environment, dependencies, and startup guide | [`../README.md`](../README.md) | Complete |
+| AMD Radeon / ROCm runbook | [`../docs/runbooks/amd-real-mode.md`](../docs/runbooks/amd-real-mode.md) | Complete |
+| Phrase catalog | [`../command/phrase_catalog.json`](../command/phrase_catalog.json) | Complete |
 | Project profile PDF | [`Silent-Vision-Project-Profile.pdf`](Silent-Vision-Project-Profile.pdf) | Complete |
-| Project profile source | [`../docs/submission/project-profile-source.md`](../docs/submission/project-profile-source.md) | Reviewed reference copy; generator is canonical |
+| Project profile source | [`../docs/submission/project-profile-source.md`](../docs/submission/project-profile-source.md) | Complete |
 | Poster PDF | [`Silent-Vision-Poster.pdf`](Silent-Vision-Poster.pdf) | Complete |
 | Poster PNG | [`Silent-Vision-Poster.png`](Silent-Vision-Poster.png) | Complete |
-| Poster source copy | [`../docs/submission/poster-copy.md`](../docs/submission/poster-copy.md) | Reviewed reference copy; generator is canonical |
-| Demo video | External URL to be added after the recorded Radeon run | Pending recording |
-| Demo script and shot checklist | [`demo-video-script.md`](demo-video-script.md) | Ready for the final 3-5 minute recording |
-| Pull request description | [`pull-request-description.md`](pull-request-description.md) | Source copy; video line remains unchecked |
-| Source repository | <https://github.com/fangjixin/silent-vision> | Current code |
+| Poster source copy | [`../docs/submission/poster-copy.md`](../docs/submission/poster-copy.md) | Complete |
+| Demo script and shot checklist | [`demo-video-script.md`](demo-video-script.md) | Ready for recording |
+| Demo video | External URL to be added after recording | Pending |
+| Pull request description | [`pull-request-description.md`](pull-request-description.md) | Ready; demo link pending |
 
-The present application classifies a visual command and returns a structured
-agent result. It does not yet control a light or door, and it does not yet create
-a browser recording or still-image artifact. The profile, poster, PR copy, and
-demo script keep that boundary explicit.
+The source, catalog, documentation, and generated assets are present. The
+official Radeon training run, final evaluation report, and video are still
+pending. No performance number is claimed. If only a small-data smoke is
+available, it must be described as proof of execution rather than evaluation.
+
+Recordings, checkpoints, and private reports are intentionally excluded from the
+public contest bundle.
