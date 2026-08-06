@@ -4,28 +4,41 @@ Silent Vision recognizes a personalized catalog of fixed phrases from a short,
 silent camera clip. It is not open-vocabulary lipreading and does not transcribe
 arbitrary speech.
 
-The browser records a 2-5 second WebM clip with audio disabled. CPU code decodes
-the video, detects one face, aligns it, and extracts a 96 x 96 grayscale mouth
-sequence. The official classifier then trains and runs in PyTorch on AMD Radeon
-through ROCm. An accepted result gets its exact text and business intent from the
-registered phrase catalog.
+The browser records a 2-5 second WebM clip with audio disabled. Before recording,
+the user selects the language; Silent Vision does not infer it from the clip. CPU
+code decodes the video, detects one face, aligns it, and extracts a 96 x 96
+grayscale mouth sequence. The official classifier then trains and runs in
+PyTorch on AMD Radeon through ROCm. An accepted result gets its exact text and
+business intent from the registered phrase catalog.
 
 The final Radeon run, evaluation report, and recorded demonstration are still
-pending. This repository does not publish an accuracy, latency, throughput, or
-memory figure. A run built with `--allow-small-dataset` is non-evidentiary and
-proves pipeline execution only.
+pending. English recordings and bilingual training do not yet exist, so this
+repository does not claim bilingual accuracy (or any accuracy, latency,
+throughput, or memory figure). A run built with `--allow-small-dataset` is
+non-evidentiary and proves pipeline execution only.
 
 Repository: <https://github.com/fangjixin/silent-vision>
 
 ## Current Catalog and Product Boundary
 
 The fixed-phrase checkpoint schema has one learned class per enabled `phraseId`.
-`UNKNOWN` is a rejection result, not a trained class. The initial catalog is:
+`UNKNOWN` is a rejection result, not a trained class. The current catalog is one
+four-phrase bilingual catalog:
 
 | phraseId | Exact displayed text | Language | Mapped intent |
 | --- | --- | --- | --- |
 | `zh_light_on_hello` | `你好，请帮我打开灯` | `zh` | `LIGHT_ON` |
 | `zh_chat_meal` | `你吃饭了吗？` | `zh` | `CHAT_OTHER` |
+| `en_light_on_hello` | `Hello, please turn on the light.` | `en` | `LIGHT_ON` |
+| `en_chat_meal` | `Have you eaten?` | `en` | `CHAT_OTHER` |
+
+The user selects the language before a clip starts; the service validates that
+selection rather than guessing a language from visual input. For that request,
+the Torch classifier calculates a selected-language softmax over only the
+enabled phrases in the selected language. It then emits exact text from the
+checkpoint catalog only when the probability and centroid-distance gates pass.
+Otherwise it emits the heuristic `UNKNOWN` rejection result without matched
+phrase text.
 
 An accepted `LIGHT_ON` decision can cross the current agent boundary as
 `action="execute"`; an accepted `CHAT_OTHER` decision becomes `action="ignore"`;
@@ -42,12 +55,13 @@ tool, add an allowlist, confirmation policy, adapter, and failure handling.
 
 ```text
 Browser camera (audio: false)
+  -> user-selected language
   -> 2-5 second WebM over WebSocket
   -> PyAV decode and 25 FPS resampling on CPU
   -> MediaPipe single-face detection and landmarks on CPU
   -> alignment and 96 x 96 grayscale mouth crop on CPU
   -> fixed-phrase Torch model on AMD Radeon / ROCm
-  -> probability + phrase-centroid distance acceptance
+  -> selected-language softmax + probability and phrase-centroid distance acceptance
   -> exact phrase text and intent from the checkpoint catalog
   -> command.result
   -> agent.result (execute, ignore, or reject)
@@ -121,11 +135,13 @@ takes under `profileId=global` and enter the exact catalog phrase. Use the mappe
 intent shown in the table above. Save unrelated clips with source intent
 `UNKNOWN`; they are used only for rejection calibration and final evaluation.
 
-The official dataset gate requires at least 15 independent takes per registered
-phrase: 10 training, 2 threshold-calibration, and 3 final-evaluation clips. It
-also requires at least 15 unrelated clips: 5 for calibration and 10 for final
-evaluation. Duplicate sample IDs or duplicate mouth-array hashes are excluded.
-Source recordings and metadata are never rewritten by the manifest builder.
+Official evidence requires 15 independent takes for each of the four phrases
+(10 training, 2 threshold-calibration, and 3 final-evaluation clips), plus at
+least 15 unrelated clips spanning both selected languages (5 for calibration and
+10 for final evaluation). Duplicate sample IDs or duplicate mouth-array hashes
+are excluded. Source recordings and metadata are never rewritten by the manifest
+builder. Do not train or report bilingual results until English recordings exist
+and the final evaluation report is complete.
 
 Inspect the stored profile:
 

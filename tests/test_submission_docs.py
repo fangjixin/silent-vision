@@ -57,6 +57,24 @@ def test_submission_copy_avoids_unverified_marketing_claims():
     assert not any(phrase in combined for phrase in banned)
 
 
+def test_public_copy_describes_the_four_phrase_bilingual_catalog():
+    """Fails if public copy regresses to the former two-Chinese-phrase scope."""
+    paths = [
+        ROOT / "README.md",
+        ROOT / "submission/README.md",
+        ROOT / "submission/demo-video-script.md",
+        ROOT / "submission/pull-request-description.md",
+    ]
+    combined = "\n".join(path.read_text(encoding="utf-8").lower() for path in paths)
+
+    assert "hello, please turn on the light." in combined
+    assert "have you eaten?" in combined
+    assert "four-phrase bilingual catalog" in combined
+    assert "user selects the language" in combined
+    assert "selected-language softmax" in combined
+    assert "two chinese phrases" not in combined
+
+
 def test_pr_description_contest_paths_resolve_to_public_materials():
     text = (ROOT / "submission/pull-request-description.md").read_text(
         encoding="utf-8"

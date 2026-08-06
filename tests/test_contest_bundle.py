@@ -69,6 +69,27 @@ def test_bundle_public_markdown_links_resolve_inside_bundle(tmp_path):
     assert not broken
 
 
+def test_bundle_carries_the_bilingual_language_routing_copy(tmp_path):
+    target = tmp_path / "submissions" / "track1-silent-vision"
+
+    build_bundle(Path.cwd(), target)
+
+    public_copy = "\n".join(
+        (target / path).read_text(encoding="utf-8")
+        for path in [
+            Path("README.md"),
+            Path("submission/README.md"),
+            Path("submission/demo-video-script.md"),
+            Path("submission/pull-request-description.md"),
+        ]
+    ).lower()
+    assert "hello, please turn on the light." in public_copy
+    assert "have you eaten?" in public_copy
+    assert "user selects the language" in public_copy
+    assert "selected-language softmax" in public_copy
+    assert "two chinese phrases" not in public_copy
+
+
 def test_bundle_excludes_internal_and_sensitive_paths(tmp_path):
     target = tmp_path / "bundle"
 

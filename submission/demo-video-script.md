@@ -3,8 +3,9 @@
 Status: pending recording on AMD Radeon. Target length: 3-5 minutes.
 
 This script demonstrates the application that exists in the repository: one
-silent clip, one fixed-phrase decision, and an explicit rejection path. It does
-not stage a physical-device or content-creation action.
+silent clip in a user-selected language, one fixed-phrase decision, and an
+explicit rejection path. It does not stage a physical-device or content-creation
+action.
 
 ## Recording Checklist
 
@@ -16,6 +17,8 @@ not stage a physical-device or content-creation action.
   `--allow-small-dataset`.
 - If the artifacts are non-evidentiary, say that they prove execution only and
   show no accuracy claim.
+- Select the language in the browser before recording. Do not describe it as
+  inferred from the clip.
 - Use one registered phrase and one unrelated or deliberately ambiguous clip.
 - Keep the returned phrase metadata, acceptance decision, and agent action
   visible.
@@ -36,7 +39,9 @@ The model chooses between registered phrase IDs, and accepted text and intent
 come from this catalog. The current source returns a structured decision; it
 does not operate a physical device or content-creation tool.”
 
-**Show:** `command/phrase_catalog.json`, including both registered phrases.
+**Show:** `command/phrase_catalog.json`, including all four registered phrases:
+Chinese `你好，请帮我打开灯` and `你吃饭了吗？`, and English
+`Hello, please turn on the light.` and `Have you eaten?`.
 
 ## 0:40-1:25 - Radeon Environment and Startup
 
@@ -69,17 +74,19 @@ model runs on the Radeon device shown as `cuda:0`.”
 ## 1:25-2:20 - Accepted Exact Phrase
 
 **On screen:** Open the HTTPS tunnel URL. Record one registered phrase. Keep the
-result JSON and visible phrase result in frame.
+result JSON and visible phrase result in frame. First select the same language
+as the phrase in the browser.
 
 Suggested phrase: `你好，请帮我打开灯`.
 
 **Say:**
 
-“I am recording one registered phrase with audio disabled. The model predicts a
-stable phrase ID and a normalized embedding. Acceptance requires both the
-checkpoint probability threshold and this phrase's maximum distance from its
-training centroid. The text on screen is copied exactly from the checkpoint
-catalog, and the catalog maps it to `LIGHT_ON`.”
+“I selected the language before recording; the application does not infer it.
+For this request, the model applies selected-language softmax only among phrases
+in that language, then predicts a stable phrase ID and normalized embedding.
+Acceptance requires both the checkpoint probability threshold and this phrase's
+maximum distance from its training centroid. The text on screen is copied exactly
+from the checkpoint catalog, and the catalog maps it to `LIGHT_ON`.”
 
 **Show:** `backend: "torch"`, accepted status, `phraseId`, exact displayed text,
 mapped intent, `openSetDistance`, threshold values, and
@@ -122,6 +129,9 @@ hashes, checkpoint hash, backend, and device.”
 “This inventory is explicitly non-evidentiary. The run proves that manifest
 building, Radeon training, checkpoint loading, and inference execute end to end.
 It does not support an accuracy or rejection-rate claim.”
+
+Do not claim bilingual accuracy in this recording: English recordings, bilingual
+training, and the final evaluation report must exist first.
 
 **Close:**
 
