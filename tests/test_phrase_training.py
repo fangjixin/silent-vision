@@ -15,7 +15,6 @@ from command.training import (
     CalibrationRecord,
     ManifestDataset,
     _calibration_records,
-    _validate_manifest_hashes,
     calibrate_thresholds,
     compute_class_centroids,
     require_rocm,
@@ -54,7 +53,9 @@ class _FakeVector:
         return list(self.values)
 
     def dot(self, other):
-        return _FakeScalar(sum(left * right for left, right in zip(self.values, other.values)))
+        return _FakeScalar(
+            sum(left * right for left, right in zip(self.values, other.values))
+        )
 
 
 class _FakeMatrix:
@@ -116,45 +117,6 @@ def test_calibration_scores_only_the_manifest_selected_language():
     )
 
     assert records[0].predicted_phrase_id == "zh_light_on"
-
-
-def _write_manifest_file(path: Path, content: str) -> str:
-    path.write_text(content, encoding="utf-8")
-    return sha256(path.read_bytes()).hexdigest()
-
-
-def test_manifest_hashes_are_bound_to_semantic_roles(tmp_path):
-    train = tmp_path / "train.jsonl"
-    known = tmp_path / "calibration-known.jsonl"
-    unknown = tmp_path / "calibration-unknown.jsonl"
-    inventory = {
-        "manifestSha256": {
-            "train.jsonl": _write_manifest_file(train, "train\n"),
-            "calibration-known.jsonl": _write_manifest_file(known, "known\n"),
-            "calibration-unknown.jsonl": _write_manifest_file(unknown, "unknown\n"),
-        }
-    }
-
-    with pytest.raises(ValueError, match="train.jsonl"):
-        _validate_manifest_hashes(inventory, (known, train, unknown))
-
-
-def test_evaluation_manifest_cannot_be_used_for_calibration(tmp_path):
-    train = tmp_path / "train.jsonl"
-    known = tmp_path / "calibration-known.jsonl"
-    unknown = tmp_path / "calibration-unknown.jsonl"
-    evaluation = tmp_path / "evaluation-known.jsonl"
-    inventory = {
-        "manifestSha256": {
-            "train.jsonl": _write_manifest_file(train, "train\n"),
-            "calibration-known.jsonl": _write_manifest_file(known, "same bytes\n"),
-            "calibration-unknown.jsonl": _write_manifest_file(unknown, "unknown\n"),
-            "evaluation-known.jsonl": _write_manifest_file(evaluation, "same bytes\n"),
-        }
-    }
-
-    with pytest.raises(ValueError, match="calibration-known.jsonl"):
-        _validate_manifest_hashes(inventory, (train, evaluation, unknown))
 
 
 def test_manifest_dataset_rejects_npy_modified_after_manifest_creation(tmp_path):
@@ -231,7 +193,9 @@ def test_calibration_without_unknown_clips_uses_non_evidentiary_default():
 def test_official_calibration_rejects_a_class_without_correct_known_record():
     known = [CalibrationRecord("a", "b", 0.92, 0.10)]
 
-    with pytest.raises(ValueError, match="no correctly classified known-calibration record"):
+    with pytest.raises(
+        ValueError, match="no correctly classified known-calibration record"
+    ):
         calibrate_thresholds(known, [], ("a", "b"))
 
 
@@ -294,6 +258,8 @@ def test_training_checks_rocm_before_reading_catalog_or_samples(monkeypatch, tmp
             train_manifest=tmp_path / "missing-train.jsonl",
             calibration_known_manifest=tmp_path / "missing-known.jsonl",
             calibration_unknown_manifest=tmp_path / "missing-unknown.jsonl",
+            evaluation_known_manifest=tmp_path / "missing-evaluation-known.jsonl",
+            evaluation_unknown_manifest=tmp_path / "missing-evaluation-unknown.jsonl",
             output_path=tmp_path / "model.pt",
             run_summary_path=tmp_path / "run.json",
             epochs=80,
@@ -304,7 +270,11 @@ def test_training_checks_rocm_before_reading_catalog_or_samples(monkeypatch, tmp
 def test_training_cli_help_runs_without_torch():
     project_root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        ["python3", str(project_root / "scripts/train_command_classifier.py"), "--help"],
+        [
+            "python3",
+            str(project_root / "scripts/train_command_classifier.py"),
+            "--help",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -313,6 +283,8 @@ def test_training_cli_help_runs_without_torch():
     assert result.returncode == 0, result.stderr
     assert "--calibration-known" in result.stdout
     assert "--calibration-unknown" in result.stdout
+    assert "--evaluation-known" in result.stdout
+    assert "--evaluation-unknown" in result.stdout
     assert "--run-summary" in result.stdout
 
 
@@ -392,48 +364,37 @@ def test_rocm_training_writes_checkpoint_and_external_run_summary(tmp_path):
     if not getattr(torch.version, "hip", None) or not torch.cuda.is_available():
         pytest.skip("requires a Radeon ROCm/HIP device")
     from command.catalog import catalog_sha256, load_phrase_catalog
+    from command.dataset import INVENTORY_SCHEMA_VERSION, MANIFEST_ROLES
 
     project_root = Path(__file__).resolve().parents[1]
     catalog_path = project_root / "command/phrase_catalog.json"
     catalog = load_phrase_catalog(catalog_path)
     manifests = {}
-    for manifest_name in (
-        "train.jsonl",
-        "calibration-known.jsonl",
-        "calibration-unknown.jsonl",
-    ):
+    for manifest_name in MANIFEST_ROLES:
         manifests[manifest_name] = tmp_path / manifest_name
 
     train_records = []
-    calibration_records = []
     for index, entry in enumerate(catalog.entries):
         train_clip = tmp_path / f"train-{index}.npy"
-        calibration_clip = tmp_path / f"calibration-{index}.npy"
         np.save(train_clip, np.full((3, 96, 96), 20 + index * 100, dtype=np.uint8))
-        np.save(calibration_clip, np.full((3, 96, 96), 30 + index * 100, dtype=np.uint8))
         train_records.append(
             {
+                "sample_id": f"train-{index}",
                 "phrase_id": entry.phrase_id,
+                "text": entry.text,
                 "language": entry.language,
+                "intent": entry.intent.value,
+                "source_intent": entry.intent.value,
                 "mouth_roi_npy": str(train_clip),
+                "source_metadata": str(tmp_path / f"metadata-{index}.json"),
                 "sha256": sha256(train_clip.read_bytes()).hexdigest(),
-            }
-        )
-        calibration_records.append(
-            {
-                "phrase_id": entry.phrase_id,
-                "language": entry.language,
-                "mouth_roi_npy": str(calibration_clip),
-                "sha256": sha256(calibration_clip.read_bytes()).hexdigest(),
             }
         )
     manifests["train.jsonl"].write_text(
         "".join(json.dumps(record) + "\n" for record in train_records), encoding="utf-8"
     )
-    manifests["calibration-known.jsonl"].write_text(
-        "".join(json.dumps(record) + "\n" for record in calibration_records), encoding="utf-8"
-    )
-    manifests["calibration-unknown.jsonl"].write_text("", encoding="utf-8")
+    for role in MANIFEST_ROLES[1:]:
+        manifests[role].write_text("", encoding="utf-8")
     manifest_hashes = {
         name: sha256(path.read_bytes()).hexdigest() for name, path in manifests.items()
     }
@@ -441,10 +402,33 @@ def test_rocm_training_writes_checkpoint_and_external_run_summary(tmp_path):
     inventory_path.write_text(
         json.dumps(
             {
+                "schemaVersion": INVENTORY_SCHEMA_VERSION,
                 "evidentiary": False,
                 "seed": 17,
                 "catalogSha256": catalog_sha256(catalog),
                 "manifestSha256": manifest_hashes,
+                "counts": {
+                    "known": len(train_records),
+                    "unknown": 0,
+                    "unknownByLanguage": {"zh": 0, "en": 0},
+                    "excluded": 0,
+                    "byPhrase": {entry.phrase_id: 1 for entry in catalog.entries},
+                    **{
+                        role.removesuffix(".jsonl"): len(train_records)
+                        if role == "train.jsonl"
+                        else 0
+                        for role in MANIFEST_ROLES
+                    },
+                },
+                "exclusions": [],
+                "duplicates": 0,
+                "intentMismatches": 0,
+                "splitMembership": {
+                    role: [record["sample_id"] for record in train_records]
+                    if role == "train.jsonl"
+                    else []
+                    for role in MANIFEST_ROLES
+                },
             }
         ),
         encoding="utf-8",
@@ -458,13 +442,17 @@ def test_rocm_training_writes_checkpoint_and_external_run_summary(tmp_path):
         train_manifest=manifests["train.jsonl"],
         calibration_known_manifest=manifests["calibration-known.jsonl"],
         calibration_unknown_manifest=manifests["calibration-unknown.jsonl"],
+        evaluation_known_manifest=manifests["evaluation-known.jsonl"],
+        evaluation_unknown_manifest=manifests["evaluation-unknown.jsonl"],
         output_path=checkpoint_path,
         run_summary_path=summary_path,
         epochs=1,
         seed=17,
     )
 
-    assert result["checkpointSha256"] == sha256(checkpoint_path.read_bytes()).hexdigest()
+    assert (
+        result["checkpointSha256"] == sha256(checkpoint_path.read_bytes()).hexdigest()
+    )
     assert result["device"] == "cuda:0"
     assert result["epochs"] == 1
     assert result["evidentiary"] is False

@@ -14,6 +14,7 @@ import pytest
 from command.evaluation import (
     EvaluationRecord,
     _evaluate_dataset,
+    _validate_checkpoint_lineage,
     _validate_partition_records,
     build_evaluation_report,
     evaluate_checkpoint,
@@ -26,9 +27,7 @@ def test_evaluation_manifest_records_require_a_supported_language():
     _validate_partition_records(
         [{"phrase_id": "zh_light_on", "language": "zh"}], known=True
     )
-    _validate_partition_records(
-        [{"phrase_id": None, "language": "en"}], known=False
-    )
+    _validate_partition_records([{"phrase_id": None, "language": "en"}], known=False)
 
     with pytest.raises(ValueError, match="language"):
         _validate_partition_records([{"phrase_id": "zh_light_on"}], known=True)
@@ -140,13 +139,47 @@ def test_evaluate_checkpoint_signature_has_no_calibration_inputs():
 
     assert list(parameters) == [
         "checkpoint_path",
+        "catalog_path",
+        "inventory_path",
+        "train_manifest",
+        "calibration_known_manifest",
+        "calibration_unknown_manifest",
         "known_manifest",
         "unknown_manifest",
         "output_path",
         "probability_override",
         "distance_override",
     ]
-    assert not any("calibration" in name for name in parameters)
+
+
+def test_final_evaluation_rejects_non_evidentiary_or_mismatched_checkpoint_lineage():
+    from command.dataset import ValidatedDatasetBundle
+
+    hashes = {
+        "train.jsonl": "1" * 64,
+        "calibration-known.jsonl": "2" * 64,
+        "calibration-unknown.jsonl": "3" * 64,
+        "evaluation-known.jsonl": "4" * 64,
+        "evaluation-unknown.jsonl": "5" * 64,
+    }
+    bundle = ValidatedDatasetBundle(
+        inventory_sha256="a" * 64,
+        catalog_sha256="b" * 64,
+        seed=17,
+        manifest_sha256=hashes,
+        evidentiary=True,
+        records={role: () for role in hashes},
+    )
+    lineage = bundle.checkpoint_lineage()
+    lineage["evidentiary"] = False
+    with pytest.raises(ValueError, match="non-evidentiary checkpoint"):
+        _validate_checkpoint_lineage(lineage, bundle)
+
+    lineage["evidentiary"] = True
+    lineage["manifestSha256"] = dict(hashes)
+    lineage["manifestSha256"]["train.jsonl"] = "f" * 64
+    with pytest.raises(ValueError, match="does not match inventory and manifests"):
+        _validate_checkpoint_lineage(lineage, bundle)
 
 
 def test_evaluate_checkpoint_rejects_non_final_partition_names_before_gpu_work(
@@ -155,6 +188,11 @@ def test_evaluate_checkpoint_rejects_non_final_partition_names_before_gpu_work(
     with pytest.raises(ValueError, match="evaluation-known.jsonl"):
         evaluate_checkpoint(
             checkpoint_path=tmp_path / "missing.pt",
+            catalog_path=tmp_path / "missing-catalog.json",
+            inventory_path=tmp_path / "missing-inventory.json",
+            train_manifest=tmp_path / "train.jsonl",
+            calibration_known_manifest=tmp_path / "calibration-known.jsonl",
+            calibration_unknown_manifest=tmp_path / "calibration-unknown.jsonl",
             known_manifest=tmp_path / "calibration-known.jsonl",
             unknown_manifest=tmp_path / "evaluation-unknown.jsonl",
             output_path=tmp_path / "report.json",
@@ -168,7 +206,17 @@ def test_evaluate_checkpoint_rejects_non_final_partition_names_before_gpu_work(
     [
         (
             "validate_command_classifier.py",
-            ("--checkpoint", "--known-manifest", "--unknown-manifest", "--output"),
+            (
+                "--checkpoint",
+                "--catalog",
+                "--inventory",
+                "--train-manifest",
+                "--calibration-known",
+                "--calibration-unknown",
+                "--known-manifest",
+                "--unknown-manifest",
+                "--output",
+            ),
         ),
         ("infer_command_clip.py", ("--checkpoint", "--mouth-roi", "--language")),
     ],
@@ -184,8 +232,6 @@ def test_phrase_cli_help_runs_without_torch(script_name, required_options):
 
     assert result.returncode == 0, result.stderr
     assert all(option in result.stdout for option in required_options)
-    assert "calibration" not in result.stdout.lower()
-    assert "--manifest " not in result.stdout
     assert "--threshold" not in result.stdout
     assert "--margin" not in result.stdout
 
@@ -196,19 +242,88 @@ def rocm_evaluation_artifacts(tmp_path_factory):
     if not getattr(torch.version, "hip", None) or not torch.cuda.is_available():
         pytest.skip("requires a Radeon ROCm/HIP device")
 
+    from command.catalog import catalog_records, load_phrase_catalog
     from command.checkpoint import save_phrase_checkpoint
+    from command.dataset import (
+        MANIFEST_ROLES,
+        build_dataset_manifests,
+        validate_dataset_bundle,
+    )
     from command.model import build_fixed_phrase_model
 
     root = tmp_path_factory.mktemp("phrase-evaluation")
-    clip = np.zeros((12, 96, 96), dtype=np.uint8)
-    clip[:, 32:64, 24:72] = np.arange(12, dtype=np.uint8)[:, None, None] * 10
-    mouth_roi = root / "mouth-roi.npy"
-    np.save(mouth_roi, clip)
+    project_root = Path(__file__).resolve().parents[1]
+    catalog_path = project_root / "command/phrase_catalog.json"
+    catalog = load_phrase_catalog(catalog_path)
+    sample_number = 1
+    for entry in catalog.entries:
+        for take in range(15):
+            sample_dir = (
+                root
+                / "profiles/global"
+                / entry.intent.value
+                / f"{entry.phrase_id}-{take}"
+            )
+            sample_dir.mkdir(parents=True)
+            (sample_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "sampleId": f"{entry.phrase_id}-{take}",
+                        "phrase": entry.text,
+                        "intent": entry.intent.value,
+                        "language": entry.language,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            np.save(
+                sample_dir / "mouth_roi.npy",
+                np.full((3, 96, 96), sample_number, dtype=np.uint8),
+            )
+            sample_number += 1
+    for language, count in (("zh", 8), ("en", 7)):
+        for take in range(count):
+            sample_id = f"unknown-{language}-{take}"
+            sample_dir = root / "profiles/global/UNKNOWN" / sample_id
+            sample_dir.mkdir(parents=True)
+            (sample_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "sampleId": sample_id,
+                        "phrase": "unrelated",
+                        "intent": "UNKNOWN",
+                        "language": language,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            np.save(
+                sample_dir / "mouth_roi.npy",
+                np.full((3, 96, 96), sample_number, dtype=np.uint8),
+            )
+            sample_number += 1
+    manifests_root = root / "manifests"
+    build_dataset_manifests(root / "profiles", catalog_path, manifests_root, False, 17)
+    manifest_paths = {role: manifests_root / role for role in MANIFEST_ROLES}
+    bundle = validate_dataset_bundle(
+        catalog_path,
+        manifests_root / "inventory.json",
+        manifest_paths,
+        require_evidentiary=True,
+    )
+    known_record = json.loads(
+        manifest_paths["evaluation-known.jsonl"]
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    mouth_roi = Path(known_record["mouth_roi_npy"])
+    clip = np.load(mouth_roi, allow_pickle=False)
 
-    model = build_fixed_phrase_model(2).eval()
+    model = build_fixed_phrase_model(4).eval()
     with torch.no_grad():
         model.classifier.weight.zero_()
-        model.classifier.bias.copy_(torch.tensor([10.0, -10.0]))
+        model.classifier.bias.copy_(torch.tensor([10.0, -10.0, 10.0, -10.0]))
         _, embedding = model(torch.from_numpy(clip).unsqueeze(0))
     checkpoint = root / "fixed-phrase.pt"
     save_phrase_checkpoint(
@@ -216,23 +331,8 @@ def rocm_evaluation_artifacts(tmp_path_factory):
         {
             "schemaVersion": "silent-vision.fixed-phrase.v2",
             "modelState": model.state_dict(),
-            "phraseIds": ["zh_light_on_hello", "zh_chat_meal"],
-            "phraseCatalog": [
-                {
-                    "phraseId": "zh_light_on_hello",
-                    "text": "你好，请帮我打开灯",
-                    "language": "zh",
-                    "intent": "LIGHT_ON",
-                    "enabled": True,
-                },
-                {
-                    "phraseId": "zh_chat_meal",
-                    "text": "你吃饭了吗？",
-                    "language": "zh",
-                    "intent": "CHAT_OTHER",
-                    "enabled": True,
-                },
-            ],
+            "phraseIds": [entry.phrase_id for entry in catalog.entries],
+            "phraseCatalog": catalog_records(catalog),
             "featureConfig": {
                 "fps": 25,
                 "height": 96,
@@ -247,45 +347,23 @@ def rocm_evaluation_artifacts(tmp_path_factory):
             "decisionThresholds": {
                 "minProbability": 0.99,
                 "maxCosineDistance": {
-                    "zh_light_on_hello": 0.05,
-                    "zh_chat_meal": 0.05,
+                    entry.phrase_id: 0.05 for entry in catalog.entries
                 },
             },
-            "classCentroids": torch.cat([embedding, -embedding], dim=0),
-            "trainingSummary": {"seed": 17, "evidentiary": False},
+            "classCentroids": torch.cat(
+                [embedding, -embedding, embedding, -embedding], dim=0
+            ),
+            "evidenceLineage": bundle.checkpoint_lineage(),
+            "trainingSummary": {"seed": 17, "evidentiary": True},
         },
-    )
-    record_digest = sha256(mouth_roi.read_bytes()).hexdigest()
-    known_manifest = root / "evaluation-known.jsonl"
-    unknown_manifest = root / "evaluation-unknown.jsonl"
-    known_manifest.write_text(
-        json.dumps(
-            {
-                "phrase_id": "zh_light_on_hello",
-                "language": "zh",
-                "mouth_roi_npy": str(mouth_roi),
-                "sha256": record_digest,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    unknown_manifest.write_text(
-        json.dumps(
-            {
-                "phrase_id": None,
-                "language": "zh",
-                "mouth_roi_npy": str(mouth_roi),
-                "sha256": record_digest,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
     )
     return {
         "checkpoint": checkpoint,
-        "known_manifest": known_manifest,
-        "unknown_manifest": unknown_manifest,
+        "catalog": catalog_path,
+        "inventory": manifests_root / "inventory.json",
+        "manifest_paths": manifest_paths,
+        "known_manifest": manifest_paths["evaluation-known.jsonl"],
+        "unknown_manifest": manifest_paths["evaluation-unknown.jsonl"],
         "mouth_roi": mouth_roi,
         "root": root,
     }
@@ -299,6 +377,13 @@ def test_checkpoint_evaluation_uses_resolved_checkpoint_thresholds_and_hashes(
 
     report = evaluate_checkpoint(
         checkpoint_path=paths["checkpoint"],
+        catalog_path=paths["catalog"],
+        inventory_path=paths["inventory"],
+        train_manifest=paths["manifest_paths"]["train.jsonl"],
+        calibration_known_manifest=paths["manifest_paths"]["calibration-known.jsonl"],
+        calibration_unknown_manifest=paths["manifest_paths"][
+            "calibration-unknown.jsonl"
+        ],
         known_manifest=paths["known_manifest"],
         unknown_manifest=paths["unknown_manifest"],
         output_path=output,
@@ -312,6 +397,8 @@ def test_checkpoint_evaluation_uses_resolved_checkpoint_thresholds_and_hashes(
         "maxCosineDistance": {
             "zh_light_on_hello": 0.05,
             "zh_chat_meal": 0.05,
+            "en_light_on_hello": 0.05,
+            "en_chat_meal": 0.05,
         },
     }
     assert (
@@ -319,12 +406,15 @@ def test_checkpoint_evaluation_uses_resolved_checkpoint_thresholds_and_hashes(
         == sha256(paths["checkpoint"].read_bytes()).hexdigest()
     )
     assert report["manifestSha256"] == {
-        "evaluation-known.jsonl": sha256(
-            paths["known_manifest"].read_bytes()
-        ).hexdigest(),
-        "evaluation-unknown.jsonl": sha256(
-            paths["unknown_manifest"].read_bytes()
-        ).hexdigest(),
+        role: sha256(path.read_bytes()).hexdigest()
+        for role, path in paths["manifest_paths"].items()
+    }
+    assert report["evidenceStatus"] == {
+        "evidentiary": True,
+        "datasetEvidentiary": True,
+        "checkpointEvidentiary": True,
+        "lineageVerified": True,
+        "thresholdsFrozen": True,
     }
     assert json.loads(output.read_text(encoding="utf-8")) == report
 

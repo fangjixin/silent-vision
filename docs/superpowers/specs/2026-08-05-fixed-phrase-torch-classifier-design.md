@@ -249,6 +249,7 @@ featureConfig
 modelConfig
 decisionThresholds
 classCentroids
+evidenceLineage
 trainingSummary
 ```
 
@@ -258,9 +259,11 @@ hard-coded five-intent label list for logits.
 
 Loading fails on unsupported schema versions, missing catalog entries, duplicate
 phrase IDs, unknown intents, model-head shape mismatch, incompatible feature
-configuration, missing or invalid centroids, a trainable parameter count above the
-design cap, or an empty model state. A legacy intent-only checkpoint is rejected
-with a migration message rather than silently misinterpreted.
+configuration, non-finite/zero/non-unit centroids, incomplete evidence lineage, a
+trainable parameter count above the design cap, or an empty model state. The
+lineage binds the inventory SHA-256, catalog SHA-256, seed, all five manifest role
+hashes, and explicit evidentiary status. A legacy intent-only checkpoint is
+rejected with a migration message rather than silently misinterpreted.
 
 ## 7. Runtime Decision Contract
 
@@ -301,7 +304,9 @@ The implementation provides:
   records mismatches, and creates deterministic splits.
 - A ROCm-only trainer that emits the versioned phrase checkpoint and JSON run
   summary.
-- A validator that emits phrase accuracy, mapped-intent accuracy, accepted
+- A validator that first authenticates the complete inventory, all five disjoint
+  role manifests, and checkpoint lineage, then emits phrase accuracy,
+  mapped-intent accuracy, accepted
   precision, known-phrase acceptance, unrelated-phrase false-accept rate,
   rejection rate, per-phrase counts, confusion matrix, effective thresholds and
   their source, checkpoint hash, partition hashes, and ROCm device evidence.

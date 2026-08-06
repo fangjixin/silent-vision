@@ -1,12 +1,17 @@
 import json
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from command.dataset import build_dataset_manifests
+from command.dataset import (
+    MANIFEST_ROLES,
+    build_dataset_manifests,
+    validate_dataset_bundle,
+)
 
 
 def save_sample(
@@ -280,3 +285,167 @@ def test_manifest_cli_builds_small_dataset_artifacts(tmp_path):
     assert inventory["evidentiary"] is False
     assert inventory["seed"] == 29
     assert json.loads(result.stdout)["evidentiary"] is False
+
+
+def bundle_paths(root: Path) -> dict[str, Path]:
+    return {role: root / role for role in MANIFEST_ROLES}
+
+
+def test_evidence_validation_derives_status_instead_of_trusting_flag(tmp_path):
+    save_sample(tmp_path, "light", "你好，请帮我打开灯", "LIGHT_ON", 1)
+    output = tmp_path / "out"
+    build_dataset_manifests(
+        tmp_path, Path("command/phrase_catalog.json"), output, True, 17
+    )
+    inventory_path = output / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["evidentiary"] = True
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="evidentiary status does not match"):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"),
+            inventory_path,
+            bundle_paths(output),
+        )
+
+
+def test_evidence_validation_requires_all_exact_manifest_roles_and_hashes(tmp_path):
+    save_sample(tmp_path, "light", "你好，请帮我打开灯", "LIGHT_ON", 1)
+    output = tmp_path / "out"
+    build_dataset_manifests(
+        tmp_path, Path("command/phrase_catalog.json"), output, True, 17
+    )
+    with pytest.raises(FileNotFoundError):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"),
+            output / "missing-inventory.json",
+            bundle_paths(output),
+        )
+
+    inventory_path = output / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["catalogSha256"] = "f" * 64
+    wrong_inventory = output / "wrong-inventory.json"
+    wrong_inventory.write_text(json.dumps(inventory), encoding="utf-8")
+    with pytest.raises(ValueError, match="catalogSha256"):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"),
+            wrong_inventory,
+            bundle_paths(output),
+        )
+
+    incomplete = bundle_paths(output)
+    incomplete.pop("evaluation-unknown.jsonl")
+    with pytest.raises(ValueError, match="all five manifest roles"):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"), output / "inventory.json", incomplete
+        )
+
+    renamed = bundle_paths(output)
+    renamed_path = output / "renamed-evaluation-known.jsonl"
+    renamed_path.write_bytes((output / "evaluation-known.jsonl").read_bytes())
+    renamed["evaluation-known.jsonl"] = renamed_path
+    with pytest.raises(ValueError, match="must reference a file named"):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"), output / "inventory.json", renamed
+        )
+
+    (output / "train.jsonl").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="SHA-256"):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"),
+            output / "inventory.json",
+            bundle_paths(output),
+        )
+
+
+def test_evidence_validation_rejects_cross_split_sample_and_roi_reuse(tmp_path):
+    for index in range(3):
+        save_sample(
+            tmp_path,
+            f"light-{index}",
+            "你好，请帮我打开灯",
+            "LIGHT_ON",
+            index + 1,
+        )
+    output = tmp_path / "out"
+    build_dataset_manifests(
+        tmp_path, Path("command/phrase_catalog.json"), output, True, 17
+    )
+    train_path = output / "train.jsonl"
+    evaluation_path = output / "evaluation-known.jsonl"
+    train_record = json.loads(train_path.read_text(encoding="utf-8").splitlines()[0])
+    evaluation_record = json.loads(evaluation_path.read_text(encoding="utf-8"))
+    evaluation_record["sample_id"] = train_record["sample_id"]
+    evaluation_path.write_text(json.dumps(evaluation_record) + "\n", encoding="utf-8")
+    inventory_path = output / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["manifestSha256"]["evaluation-known.jsonl"] = sha256(
+        evaluation_path.read_bytes()
+    ).hexdigest()
+    inventory["splitMembership"]["evaluation-known.jsonl"] = [train_record["sample_id"]]
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="sample_id appears in multiple splits"):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"),
+            inventory_path,
+            bundle_paths(output),
+        )
+
+    evaluation_record["sample_id"] = "unique-id"
+    evaluation_record["sha256"] = train_record["sha256"]
+    evaluation_record["mouth_roi_npy"] = train_record["mouth_roi_npy"]
+    evaluation_path.write_text(json.dumps(evaluation_record) + "\n", encoding="utf-8")
+    inventory["manifestSha256"]["evaluation-known.jsonl"] = sha256(
+        evaluation_path.read_bytes()
+    ).hexdigest()
+    inventory["splitMembership"]["evaluation-known.jsonl"] = ["unique-id"]
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ROI SHA-256 appears in multiple splits"):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"),
+            inventory_path,
+            bundle_paths(output),
+        )
+
+
+def test_evidence_validation_rejects_mixed_roles_even_with_edited_inventory(tmp_path):
+    for index in range(3):
+        save_sample(
+            tmp_path,
+            f"light-{index}",
+            "你好，请帮我打开灯",
+            "LIGHT_ON",
+            index + 1,
+        )
+    output = tmp_path / "out"
+    build_dataset_manifests(
+        tmp_path, Path("command/phrase_catalog.json"), output, True, 17
+    )
+    calibration_path = output / "calibration-known.jsonl"
+    evaluation_path = output / "evaluation-known.jsonl"
+    calibration_bytes = calibration_path.read_bytes()
+    evaluation_bytes = evaluation_path.read_bytes()
+    calibration_path.write_bytes(evaluation_bytes)
+    evaluation_path.write_bytes(calibration_bytes)
+    inventory_path = output / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    for role, path in (
+        ("calibration-known.jsonl", calibration_path),
+        ("evaluation-known.jsonl", evaluation_path),
+    ):
+        inventory["manifestSha256"][role] = sha256(path.read_bytes()).hexdigest()
+        inventory["splitMembership"][role] = [
+            json.loads(path.read_text(encoding="utf-8"))["sample_id"]
+        ]
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="deterministic split policy"):
+        validate_dataset_bundle(
+            Path("command/phrase_catalog.json"),
+            inventory_path,
+            bundle_paths(output),
+        )

@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 from backend.config import Settings
 from backend.main import create_app
 from backend.schemas import CommandDecision
+from command.catalog import PhraseCatalog, catalog_sha256
+from command.dataset import MANIFEST_ROLES
 from video.clip import DecodedClip
 
 
@@ -175,28 +177,29 @@ def test_real_torch_websocket_accepts_catalog_text_and_rejects_without_execution
             parameter.zero_()
         model.classifier.bias.copy_(torch.tensor([10.0, -10.0]))
     checkpoint = tmp_path / "synthetic-fixed-phrase.pt"
+    phrase_catalog = [
+        {
+            "phraseId": "zh_light_on_hello",
+            "text": "你好，请帮我打开灯",
+            "language": "zh",
+            "intent": "LIGHT_ON",
+            "enabled": True,
+        },
+        {
+            "phraseId": "zh_chat_meal",
+            "text": "你吃饭了吗？",
+            "language": "zh",
+            "intent": "CHAT_OTHER",
+            "enabled": True,
+        },
+    ]
     save_phrase_checkpoint(
         checkpoint,
         {
             "schemaVersion": "silent-vision.fixed-phrase.v2",
             "modelState": model.state_dict(),
             "phraseIds": ["zh_light_on_hello", "zh_chat_meal"],
-            "phraseCatalog": [
-                {
-                    "phraseId": "zh_light_on_hello",
-                    "text": "你好，请帮我打开灯",
-                    "language": "zh",
-                    "intent": "LIGHT_ON",
-                    "enabled": True,
-                },
-                {
-                    "phraseId": "zh_chat_meal",
-                    "text": "你吃饭了吗？",
-                    "language": "zh",
-                    "intent": "CHAT_OTHER",
-                    "enabled": True,
-                },
-            ],
+            "phraseCatalog": phrase_catalog,
             "featureConfig": {
                 "fps": 25,
                 "height": 96,
@@ -215,7 +218,21 @@ def test_real_torch_websocket_accepts_catalog_text_and_rejects_without_execution
                     "zh_chat_meal": 1.10,
                 },
             },
-            "classCentroids": torch.zeros((2, 64), dtype=torch.float32),
+            "classCentroids": torch.nn.functional.normalize(
+                torch.ones((2, 64), dtype=torch.float32), dim=1
+            ),
+            "evidenceLineage": {
+                "inventorySha256": "a" * 64,
+                "catalogSha256": catalog_sha256(
+                    PhraseCatalog.from_records(phrase_catalog)
+                ),
+                "seed": 17,
+                "manifestSha256": {
+                    role: str(index) * 64
+                    for index, role in enumerate(MANIFEST_ROLES, start=1)
+                },
+                "evidentiary": False,
+            },
             "trainingSummary": {"seed": 17, "evidentiary": False},
         },
     )

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from command.dataset import ValidatedDatasetBundle, validate_dataset_bundle
 from command.language import validate_recognition_language
 
 UNKNOWN_PHRASE_ID = "UNKNOWN"
@@ -53,7 +54,9 @@ def build_evaluation_report(
         try:
             expected_intent = phrase_intents[expected]
         except KeyError as exc:
-            raise ValueError(f"known phrase is missing from phrase_intents: {expected!r}") from exc
+            raise ValueError(
+                f"known phrase is missing from phrase_intents: {expected!r}"
+            ) from exc
         if expected not in per_phrase:
             per_phrase[expected] = {
                 "knownTotal": 0,
@@ -70,7 +73,9 @@ def build_evaluation_report(
         phrase_correct += int(is_phrase_correct)
         phrase_counts["top1Correct"] += int(is_phrase_correct)
 
-        is_intent_correct = phrase_intents.get(record.predicted_phrase_id) == expected_intent
+        is_intent_correct = (
+            phrase_intents.get(record.predicted_phrase_id) == expected_intent
+        )
         mapped_intent_correct += int(is_intent_correct)
         phrase_counts["mappedIntentCorrect"] += int(is_intent_correct)
 
@@ -88,7 +93,9 @@ def build_evaluation_report(
 
     for record in unknown_records:
         if record.expected_phrase_id is not None:
-            raise ValueError("unknown evaluation records must not have expected_phrase_id")
+            raise ValueError(
+                "unknown evaluation records must not have expected_phrase_id"
+            )
         unknown_accepted += int(record.accepted)
         displayed_prediction = (
             record.predicted_phrase_id if record.accepted else UNKNOWN_PHRASE_ID
@@ -125,6 +132,11 @@ def build_evaluation_report(
 
 def evaluate_checkpoint(
     checkpoint_path: Path,
+    catalog_path: Path,
+    inventory_path: Path,
+    train_manifest: Path,
+    calibration_known_manifest: Path,
+    calibration_unknown_manifest: Path,
     known_manifest: Path,
     unknown_manifest: Path,
     output_path: Path,
@@ -138,9 +150,26 @@ def evaluate_checkpoint(
     _require_final_partition(known_manifest, "evaluation-known.jsonl")
     _require_final_partition(unknown_manifest, "evaluation-unknown.jsonl")
 
+    bundle = validate_dataset_bundle(
+        Path(catalog_path),
+        Path(inventory_path),
+        {
+            "train.jsonl": Path(train_manifest),
+            "calibration-known.jsonl": Path(calibration_known_manifest),
+            "calibration-unknown.jsonl": Path(calibration_unknown_manifest),
+            "evaluation-known.jsonl": known_manifest,
+            "evaluation-unknown.jsonl": unknown_manifest,
+        },
+        require_evidentiary=True,
+    )
+
     from backend.config import Settings
+    from command.checkpoint import load_phrase_checkpoint
     from command.inference import TorchCommandClassifierBackend
     from command.training import ManifestDataset, _sha256_file, _write_json_atomic
+
+    validated_checkpoint = load_phrase_checkpoint(checkpoint_path, "cpu")
+    _validate_checkpoint_lineage(validated_checkpoint.evidence_lineage, bundle)
 
     backend = TorchCommandClassifierBackend(
         Settings(
@@ -169,14 +198,19 @@ def evaluate_checkpoint(
         "backend": "torch",
         "device": str(backend.device),
         "checkpointSha256": _sha256_file(checkpoint_path),
-        "manifestSha256": {
-            "evaluation-known.jsonl": _sha256_file(known_manifest),
-            "evaluation-unknown.jsonl": _sha256_file(unknown_manifest),
-        },
+        "inventorySha256": bundle.inventory_sha256,
+        "manifestSha256": dict(bundle.manifest_sha256),
         "thresholdSource": backend.thresholds.source,
         "effectiveThresholds": {
             "minProbability": backend.thresholds.min_probability,
             "maxCosineDistance": dict(backend.thresholds.max_cosine_distance),
+        },
+        "evidenceStatus": {
+            "evidentiary": backend.thresholds.source == "checkpoint",
+            "datasetEvidentiary": bundle.evidentiary,
+            "checkpointEvidentiary": True,
+            "lineageVerified": True,
+            "thresholdsFrozen": backend.thresholds.source == "checkpoint",
         },
     }
     report = build_evaluation_report(
@@ -187,6 +221,17 @@ def evaluate_checkpoint(
     )
     _write_json_atomic(output_path, report)
     return report
+
+
+def _validate_checkpoint_lineage(
+    checkpoint_lineage: Mapping[str, Any], bundle: ValidatedDatasetBundle
+) -> None:
+    if checkpoint_lineage.get("evidentiary") is not True:
+        raise ValueError("final evidence rejects a non-evidentiary checkpoint")
+    if dict(checkpoint_lineage) != bundle.checkpoint_lineage():
+        raise ValueError(
+            "checkpoint evidence lineage does not match inventory and manifests"
+        )
 
 
 def _require_final_partition(path: Path, expected_name: str) -> None:

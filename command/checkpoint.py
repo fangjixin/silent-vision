@@ -10,7 +10,8 @@ from numbers import Real
 from pathlib import Path
 from typing import Any
 
-from command.catalog import PhraseCatalog
+from command.catalog import PhraseCatalog, catalog_sha256
+from command.dataset import MANIFEST_ROLES
 from command.model import PARAMETER_CAP
 
 SCHEMA_VERSION = "silent-vision.fixed-phrase.v2"
@@ -29,6 +30,7 @@ REQUIRED_KEYS = frozenset(
         "decisionPolicy",
         "decisionThresholds",
         "classCentroids",
+        "evidenceLineage",
         "trainingSummary",
     }
 )
@@ -42,6 +44,7 @@ class ValidatedPhraseCheckpointSchema:
     embedding_dim: int
     parameter_cap: int
     decision_thresholds: dict[str, Any]
+    evidence_lineage: dict[str, Any]
     training_summary: dict[str, Any]
 
 
@@ -52,6 +55,7 @@ class LoadedPhraseCheckpoint:
     phrase_ids: tuple[str, ...]
     centroids: Any
     decision_thresholds: dict[str, Any]
+    evidence_lineage: dict[str, Any]
     training_summary: dict[str, Any]
 
 
@@ -123,6 +127,7 @@ def validate_phrase_checkpoint_schema(
             "classCentroids shape must be "
             f"[{len(phrase_ids)}, {embedding_dim}], got {None if shape is None else list(shape)}"
         )
+    _validate_centroid_values(centroids)
 
     thresholds = dict(_mapping(payload["decisionThresholds"], "decisionThresholds"))
     _require_keys(
@@ -145,7 +150,14 @@ def validate_phrase_checkpoint_schema(
         normalized_distances[phrase_id] = distance
     thresholds["maxCosineDistance"] = normalized_distances
 
+    evidence_lineage = _validate_evidence_lineage(payload["evidenceLineage"], catalog)
     training_summary = dict(_mapping(payload["trainingSummary"], "trainingSummary"))
+    if training_summary.get("seed") != evidence_lineage["seed"]:
+        raise ValueError("trainingSummary seed must match evidenceLineage seed")
+    if training_summary.get("evidentiary") is not evidence_lineage["evidentiary"]:
+        raise ValueError(
+            "trainingSummary evidentiary must match evidenceLineage evidentiary"
+        )
     return ValidatedPhraseCheckpointSchema(
         catalog=catalog,
         phrase_ids=phrase_ids,
@@ -153,6 +165,7 @@ def validate_phrase_checkpoint_schema(
         embedding_dim=embedding_dim,
         parameter_cap=parameter_cap,
         decision_thresholds=thresholds,
+        evidence_lineage=evidence_lineage,
         training_summary=training_summary,
     )
 
@@ -214,6 +227,7 @@ def load_phrase_checkpoint(path: Path, device: str) -> LoadedPhraseCheckpoint:
         phrase_ids=validated.phrase_ids,
         centroids=validated.centroids,
         decision_thresholds=validated.decision_thresholds,
+        evidence_lineage=validated.evidence_lineage,
         training_summary=validated.training_summary,
     )
 
@@ -312,6 +326,91 @@ def _finite_number(value: Any, name: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"{name} must be finite")
     return number
+
+
+def _validate_centroid_values(centroids: Any) -> None:
+    if hasattr(centroids, "detach"):
+        values = centroids.detach().to(dtype=getattr(centroids, "dtype", None))
+        if not bool(values.isfinite().all().item()):
+            raise ValueError("classCentroids must contain only finite values")
+        norms = values.float().norm(dim=1)
+        if bool((norms <= 1e-12).any().item()):
+            raise ValueError("classCentroids rows must be non-zero")
+        if bool(((norms - 1.0).abs() > 1e-4).any().item()):
+            raise ValueError("classCentroids rows must be unit-normalized")
+        return
+
+    import numpy as np
+
+    values = np.asarray(centroids, dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise ValueError("classCentroids must contain only finite values")
+    norms = np.linalg.norm(values, axis=1)
+    if np.any(norms <= 1e-12):
+        raise ValueError("classCentroids rows must be non-zero")
+    if np.any(np.abs(norms - 1.0) > 1e-4):
+        raise ValueError("classCentroids rows must be unit-normalized")
+
+
+def _validate_evidence_lineage(value: Any, catalog: PhraseCatalog) -> dict[str, Any]:
+    lineage = _mapping(value, "evidenceLineage")
+    expected_keys = {
+        "inventorySha256",
+        "catalogSha256",
+        "seed",
+        "manifestSha256",
+        "evidentiary",
+    }
+    if set(lineage) != expected_keys:
+        missing = sorted(expected_keys - lineage.keys())
+        detail = f": {', '.join(missing)}" if missing else ""
+        raise ValueError(f"evidenceLineage has invalid keys{detail}")
+    inventory_digest = _sha256_value(
+        lineage["inventorySha256"], "evidenceLineage inventorySha256"
+    )
+    catalog_digest = _sha256_value(
+        lineage["catalogSha256"], "evidenceLineage catalogSha256"
+    )
+    if catalog_digest != catalog_sha256(catalog):
+        raise ValueError("evidenceLineage catalogSha256 does not match phraseCatalog")
+    seed = lineage["seed"]
+    if not isinstance(seed, int) or isinstance(seed, bool):
+        raise ValueError("evidenceLineage seed must be an integer")  # noqa: TRY004
+    manifest_hashes = _mapping(
+        lineage["manifestSha256"], "evidenceLineage manifestSha256"
+    )
+    if set(manifest_hashes) != set(MANIFEST_ROLES):
+        raise ValueError(
+            "evidenceLineage manifestSha256 must contain all five manifest roles"
+        )
+    normalized_hashes = {
+        role: _sha256_value(
+            manifest_hashes[role], f"evidenceLineage manifestSha256[{role!r}]"
+        )
+        for role in MANIFEST_ROLES
+    }
+    evidentiary = lineage["evidentiary"]
+    if not isinstance(evidentiary, bool):
+        raise ValueError(  # noqa: TRY004
+            "evidenceLineage evidentiary must be a boolean"
+        )
+    return {
+        "inventorySha256": inventory_digest,
+        "catalogSha256": catalog_digest,
+        "seed": seed,
+        "manifestSha256": normalized_hashes,
+        "evidentiary": evidentiary,
+    }
+
+
+def _sha256_value(value: Any, name: str) -> str:
+    if not isinstance(value, str) or len(value) != 64:
+        raise ValueError(f"{name} must be 64 hexadecimal characters")
+    try:
+        int(value, 16)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be 64 hexadecimal characters") from exc
+    return value.lower()
 
 
 def _sha256(path: Path) -> str:

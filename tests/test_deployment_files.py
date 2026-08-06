@@ -17,6 +17,22 @@ OFFICIAL_SCRIPTS = (
 )
 
 
+def test_env_example_uses_only_active_settings_and_fixed_phrase_checkpoint():
+    from backend.config import Settings
+
+    text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    active_keys = {
+        line.split("=", 1)[0].strip().lower()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "=" in line
+    }
+
+    assert active_keys <= set(Settings.model_fields)
+    assert "COMMAND_FEATURE_DIM" not in text
+    assert "models/fixed-phrase.pt" in text
+    assert "models/command_classifier.pt" not in text
+
+
 def _run(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", script],
@@ -298,7 +314,9 @@ def _make_smoke_dispatch_python(tmp_path: Path) -> Path:
     return executable
 
 
-def _smoke_env(tmp_path: Path, prediction: dict[str, object]) -> tuple[dict[str, str], Path]:
+def _smoke_env(
+    tmp_path: Path, prediction: dict[str, object]
+) -> tuple[dict[str, str], Path]:
     env, checkpoint, log_path = _base_env(tmp_path)
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_bytes(b"synthetic checkpoint")

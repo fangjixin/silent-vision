@@ -173,8 +173,11 @@ be audited without editing the source files.
 
 ## 3. Train and Calibrate on ROCm
 
-Training uses only `train.jsonl` plus the two calibration partitions. It refuses
-evaluation manifests and has no CPU classifier fallback.
+Training optimizes only on `train.jsonl` and calibrates only on the two
+calibration partitions. It nevertheless requires all five role manifests so it
+can validate their inventory hashes, official counts, and cross-split sample/ROI
+disjointness before binding the complete lineage into the checkpoint. It has no
+CPU classifier fallback.
 
 ```bash
 mkdir -p /workspace/persistent/silent-vision/models \
@@ -186,6 +189,8 @@ mkdir -p /workspace/persistent/silent-vision/models \
   --train-manifest /workspace/persistent/silent-vision/manifests/train.jsonl \
   --calibration-known /workspace/persistent/silent-vision/manifests/calibration-known.jsonl \
   --calibration-unknown /workspace/persistent/silent-vision/manifests/calibration-unknown.jsonl \
+  --evaluation-known /workspace/persistent/silent-vision/manifests/evaluation-known.jsonl \
+  --evaluation-unknown /workspace/persistent/silent-vision/manifests/evaluation-unknown.jsonl \
   --output /workspace/persistent/silent-vision/models/fixed-phrase.pt \
   --run-summary /workspace/persistent/silent-vision/reports/training-run.json \
   --epochs 80 \
@@ -204,6 +209,11 @@ only the untouched final partitions:
 ```bash
 /opt/venv/bin/python scripts/validate_command_classifier.py \
   --checkpoint /workspace/persistent/silent-vision/models/fixed-phrase.pt \
+  --catalog command/phrase_catalog.json \
+  --inventory /workspace/persistent/silent-vision/manifests/inventory.json \
+  --train-manifest /workspace/persistent/silent-vision/manifests/train.jsonl \
+  --calibration-known /workspace/persistent/silent-vision/manifests/calibration-known.jsonl \
+  --calibration-unknown /workspace/persistent/silent-vision/manifests/calibration-unknown.jsonl \
   --known-manifest /workspace/persistent/silent-vision/manifests/evaluation-known.jsonl \
   --unknown-manifest /workspace/persistent/silent-vision/manifests/evaluation-unknown.jsonl \
   --output /workspace/persistent/silent-vision/reports/final-evaluation.json
@@ -211,9 +221,11 @@ only the untouched final partitions:
 
 The JSON report records counts and denominators for phrase accuracy,
 mapped-intent accuracy, known acceptance, accepted-phrase accuracy, and unknown
-false acceptance/rejection. It also records the effective threshold source,
-checkpoint hash, manifest hashes, backend, and device. Do not tune thresholds on
-these final partitions.
+false acceptance/rejection. It also records an explicit evidence status, the
+verified inventory/checkpoint lineage, effective threshold source, checkpoint
+hash, all five manifest hashes, backend, and device. A renamed, mixed, reused,
+non-evidentiary, or lineage-mismatched bundle is rejected. Do not tune thresholds
+on these final partitions.
 
 Run one checkpoint-backed mouth-ROI clip with:
 

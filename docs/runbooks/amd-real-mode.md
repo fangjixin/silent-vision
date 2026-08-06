@@ -86,29 +86,40 @@ mkdir -p /workspace/persistent/silent-vision/models \
   --train-manifest /workspace/persistent/silent-vision/manifests/train.jsonl \
   --calibration-known /workspace/persistent/silent-vision/manifests/calibration-known.jsonl \
   --calibration-unknown /workspace/persistent/silent-vision/manifests/calibration-unknown.jsonl \
+  --evaluation-known /workspace/persistent/silent-vision/manifests/evaluation-known.jsonl \
+  --evaluation-unknown /workspace/persistent/silent-vision/manifests/evaluation-unknown.jsonl \
   --output /workspace/persistent/silent-vision/models/fixed-phrase.pt \
   --run-summary /workspace/persistent/silent-vision/reports/training-run.json \
   --epochs 80 \
   --seed 17
 ```
 
-Training authenticates the catalog and manifest hashes, loads only the training
-and calibration roles, calibrates minimum probability plus per-phrase maximum
-centroid distance, and saves both thresholds in the checkpoint.
+Training authenticates the inventory and all five manifest roles, checks official
+counts plus sample-ID/ROI-hash disjointness, trains only on the training role,
+calibrates only on the calibration roles, and binds the full lineage and frozen
+thresholds into the checkpoint. Evaluation roles are validated but never used
+for training or calibration.
 
 ## Frozen Final Evaluation
 
 ```bash
 /opt/venv/bin/python scripts/validate_command_classifier.py \
   --checkpoint /workspace/persistent/silent-vision/models/fixed-phrase.pt \
+  --catalog command/phrase_catalog.json \
+  --inventory /workspace/persistent/silent-vision/manifests/inventory.json \
+  --train-manifest /workspace/persistent/silent-vision/manifests/train.jsonl \
+  --calibration-known /workspace/persistent/silent-vision/manifests/calibration-known.jsonl \
+  --calibration-unknown /workspace/persistent/silent-vision/manifests/calibration-unknown.jsonl \
   --known-manifest /workspace/persistent/silent-vision/manifests/evaluation-known.jsonl \
   --unknown-manifest /workspace/persistent/silent-vision/manifests/evaluation-unknown.jsonl \
   --output /workspace/persistent/silent-vision/reports/final-evaluation.json
 ```
 
-Do not pass threshold overrides for official evidence. The command evaluates the
-frozen checkpoint against final partitions only and writes metric numerators,
-denominators, hashes, threshold provenance, backend, and device.
+Do not pass threshold overrides for official evidence. The command verifies the
+complete inventory/checkpoint lineage and rejects non-evidentiary, renamed,
+mixed, or overlapping bundles before evaluating the untouched final partitions.
+It writes metric numerators, denominators, an explicit evidence status, all five
+manifest hashes, threshold provenance, backend, and device.
 
 ## One-Clip and ROCm Smoke Checks
 

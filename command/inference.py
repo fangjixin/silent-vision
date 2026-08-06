@@ -75,6 +75,8 @@ def evaluate_phrase_rejection(
     predicted_phrase_id: str,
     thresholds: ThresholdResolution,
 ) -> tuple[bool, str | None]:
+    if not math.isfinite(float(probability)) or not math.isfinite(float(distance)):
+        return False, "non_finite_score"
     if probability < thresholds.min_probability:
         return False, "low_probability"
     if distance > thresholds.max_cosine_distance[predicted_phrase_id]:
@@ -256,16 +258,23 @@ class TorchCommandClassifierBackend:
         )
         predicted_phrase_id = self.loaded_checkpoint.phrase_ids[best_index]
         predicted_entry = self.catalog_by_phrase_id[predicted_phrase_id]
-        similarity = self.torch.nn.functional.cosine_similarity(
-            embedding.squeeze(0), self.centroids[best_index], dim=0
-        ).clamp(-1.0, 1.0)
-        distance = min(2.0, max(0.0, 1.0 - float(similarity.item())))
+        similarity_value = float(
+            self.torch.nn.functional.cosine_similarity(
+                embedding.squeeze(0), self.centroids[best_index], dim=0
+            ).item()
+        )
+        raw_distance = (
+            1.0 - min(1.0, max(-1.0, similarity_value))
+            if math.isfinite(similarity_value)
+            else math.nan
+        )
         accepted, rejection_reason = evaluate_phrase_rejection(
             best_probability,
-            distance,
+            raw_distance,
             predicted_phrase_id,
             self.thresholds,
         )
+        distance = raw_distance if math.isfinite(raw_distance) else 2.0
         margin = round(max(0.0, best_probability - second_probability), 6)
         top_k = [
             self._top_k_item(index, scores.probabilities[index])
@@ -293,6 +302,7 @@ class TorchCommandClassifierBackend:
                 ],
                 "probability": best_probability,
                 "openSetDistance": distance,
+                "openSetDistanceValid": math.isfinite(raw_distance),
                 "thresholdSource": self.thresholds.source,
                 "minProbabilityThreshold": self.thresholds.min_probability,
                 "maxCosineDistanceThreshold": self.thresholds.max_cosine_distance[
@@ -390,8 +400,7 @@ class PrototypeCommandClassifierBackend:
             samples = [
                 sample
                 for sample in samples
-                if _clean_language(sample.metadata.get("language"))
-                == selected_language
+                if _clean_language(sample.metadata.get("language")) == selected_language
             ]
             if not samples:
                 continue

@@ -15,6 +15,7 @@ import numpy as np
 
 from command.catalog import catalog_records, catalog_sha256, load_phrase_catalog
 from command.checkpoint import DECISION_POLICY, SCHEMA_VERSION, save_phrase_checkpoint
+from command.dataset import validate_dataset_bundle
 from command.language import score_language_candidates, validate_recognition_language
 from command.model import (
     PARAMETER_CAP,
@@ -263,6 +264,8 @@ def train_phrase_classifier(
     train_manifest: Path,
     calibration_known_manifest: Path,
     calibration_unknown_manifest: Path,
+    evaluation_known_manifest: Path,
+    evaluation_unknown_manifest: Path,
     output_path: Path,
     run_summary_path: Path,
     epochs: int,
@@ -278,22 +281,23 @@ def train_phrase_classifier(
 
     _seed_everything(torch, seed)
     catalog = load_phrase_catalog(Path(catalog_path))
-    inventory = _read_json_object(Path(inventory_path), "inventory")
-    inventory_evidentiary = bool(inventory.get("evidentiary", False))
+    manifest_paths = {
+        "train.jsonl": Path(train_manifest),
+        "calibration-known.jsonl": Path(calibration_known_manifest),
+        "calibration-unknown.jsonl": Path(calibration_unknown_manifest),
+        "evaluation-known.jsonl": Path(evaluation_known_manifest),
+        "evaluation-unknown.jsonl": Path(evaluation_unknown_manifest),
+    }
+    bundle = validate_dataset_bundle(
+        Path(catalog_path), Path(inventory_path), manifest_paths
+    )
+    inventory_evidentiary = bundle.evidentiary
     if inventory_evidentiary and epochs != OFFICIAL_EPOCHS:
         raise ValueError(f"official evidence requires exactly {OFFICIAL_EPOCHS} epochs")
-    if inventory.get("seed") != seed:
+    if bundle.seed != seed:
         raise ValueError("training seed must match inventory seed")
 
     catalog_digest = catalog_sha256(catalog)
-    if inventory.get("catalogSha256") != catalog_digest:
-        raise ValueError("inventory catalogSha256 does not match the catalog")
-    manifest_paths = (
-        Path(train_manifest),
-        Path(calibration_known_manifest),
-        Path(calibration_unknown_manifest),
-    )
-    manifest_hashes = _validate_manifest_hashes(inventory, manifest_paths)
 
     phrase_ids = tuple(entry.phrase_id for entry in catalog.entries)
     phrase_languages = tuple(entry.language for entry in catalog.entries)
@@ -373,12 +377,15 @@ def train_phrase_classifier(
     training_summary = {
         "seed": seed,
         "catalogSha256": catalog_digest,
-        "manifestSha256": manifest_hashes,
+        "inventorySha256": bundle.inventory_sha256,
+        "manifestSha256": bundle.manifest_sha256,
         "epochs": epochs,
         "parameterCount": parameter_count,
         "calibration": calibration,
         "evidentiary": evidentiary,
     }
+    evidence_lineage = bundle.checkpoint_lineage()
+    evidence_lineage["evidentiary"] = evidentiary
     payload = {
         "schemaVersion": SCHEMA_VERSION,
         "modelState": {
@@ -394,6 +401,7 @@ def train_phrase_classifier(
             "maxCosineDistance": calibration["maxCosineDistance"],
         },
         "classCentroids": centroids.detach().cpu(),
+        "evidenceLineage": evidence_lineage,
         "trainingSummary": training_summary,
     }
     checkpoint_digest = save_phrase_checkpoint(Path(output_path), payload)
@@ -499,34 +507,6 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate_manifest_hashes(
-    inventory: dict[str, Any], manifest_paths: Sequence[Path]
-) -> dict[str, str]:
-    expected_hashes = inventory.get("manifestSha256")
-    if not isinstance(expected_hashes, dict):
-        raise ValueError("inventory manifestSha256 must be an object")  # noqa: TRY004
-    manifest_roles = (
-        "train.jsonl",
-        "calibration-known.jsonl",
-        "calibration-unknown.jsonl",
-    )
-    if len(manifest_paths) != len(manifest_roles):
-        raise ValueError(
-            "exactly three training/calibration manifest paths are required"
-        )
-    actual_hashes: dict[str, str] = {}
-    for role, path in zip(manifest_roles, manifest_paths):
-        if path.name != role:
-            raise ValueError(
-                f"{role} argument must reference a file named {role}, got {path.name}"
-            )
-        digest = _sha256_file(path)
-        if expected_hashes.get(role) != digest:
-            raise ValueError(f"manifest SHA-256 does not match inventory role: {role}")
-        actual_hashes[role] = digest
-    return actual_hashes
-
-
 def _validate_sample_sha256(record: dict[str, Any]) -> None:
     path_value = record.get("mouth_roi_npy")
     if not isinstance(path_value, str) or not path_value:
@@ -609,9 +589,13 @@ def _calibration_records(
             logits, embeddings = model(frames.to(device))
             for row_index in range(frames.shape[0]):
                 manifest_record = dataset.records[manifest_index]
-                language = validate_recognition_language(manifest_record.get("language"))
+                language = validate_recognition_language(
+                    manifest_record.get("language")
+                )
                 scores = score_language_candidates(
-                    logits[row_index].detach().cpu().tolist(), phrase_languages, language
+                    logits[row_index].detach().cpu().tolist(),
+                    phrase_languages,
+                    language,
                 )
                 predicted_index = scores.ranked_indices[0]
                 expected_index = int(labels[row_index].item())

@@ -9,16 +9,24 @@ import numpy as np
 import pytest
 
 import command.checkpoint as checkpoint_module
+from command.catalog import PhraseCatalog, catalog_sha256
 from command.checkpoint import validate_phrase_checkpoint_schema
 
 DECISION_POLICY = {
     "languageSelectionRequired": True,
     "probabilityNormalization": "selected-language-softmax",
 }
+MANIFEST_HASHES = {
+    "train.jsonl": "1" * 64,
+    "calibration-known.jsonl": "2" * 64,
+    "calibration-unknown.jsonl": "3" * 64,
+    "evaluation-known.jsonl": "4" * 64,
+    "evaluation-unknown.jsonl": "5" * 64,
+}
 
 
 def metadata_payload() -> dict:
-    return {
+    payload = {
         "schemaVersion": "silent-vision.fixed-phrase.v2",
         "modelState": {},
         "phraseIds": [
@@ -69,9 +77,20 @@ def metadata_payload() -> dict:
             },
         },
         "decisionPolicy": DECISION_POLICY,
-        "classCentroids": np.zeros((4, 64), dtype=np.float32),
+        "classCentroids": np.tile(np.eye(1, 64, dtype=np.float32), (4, 1)),
+        "evidenceLineage": {
+            "inventorySha256": "a" * 64,
+            "catalogSha256": "b" * 64,
+            "seed": 17,
+            "manifestSha256": dict(MANIFEST_HASHES),
+            "evidentiary": False,
+        },
         "trainingSummary": {"seed": 17, "evidentiary": False},
     }
+    payload["evidenceLineage"]["catalogSha256"] = catalog_sha256(
+        PhraseCatalog.from_records(payload["phraseCatalog"])
+    )
+    return payload
 
 
 def test_checkpoint_schema_validation_runs_without_torch():
@@ -172,10 +191,50 @@ def test_checkpoint_thresholds_must_be_numeric():
         validate_phrase_checkpoint_schema(payload)
 
 
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (math.nan, "finite"),
+        (math.inf, "finite"),
+        (0.0, "non-zero"),
+        (0.5, "unit-normalized"),
+        (2.0, "unit-normalized"),
+    ],
+)
+def test_checkpoint_rejects_corrupt_class_centroids(value, message):
+    # Catches malformed centroids reaching cosine similarity and turning NaN into
+    # an accepted distance through Python's min/max behavior.
+    payload = metadata_payload()
+    payload["classCentroids"][0] = 0.0
+    payload["classCentroids"][0, 0] = value
+
+    with pytest.raises(ValueError, match=message):
+        validate_phrase_checkpoint_schema(payload)
+
+
 def test_checkpoint_requires_fixed_parameter_cap():
     payload = metadata_payload()
     payload["modelConfig"]["parameterCap"] = 1_000_000
     with pytest.raises(ValueError, match="150000"):
+        validate_phrase_checkpoint_schema(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda lineage: lineage.pop("inventorySha256"), "inventorySha256"),
+        (
+            lambda lineage: lineage["manifestSha256"].pop("evaluation-known.jsonl"),
+            "all five manifest roles",
+        ),
+        (lambda lineage: lineage.__setitem__("evidentiary", "yes"), "boolean"),
+    ],
+)
+def test_checkpoint_requires_complete_explicit_evidence_lineage(mutation, message):
+    payload = metadata_payload()
+    mutation(payload["evidenceLineage"])
+
+    with pytest.raises(ValueError, match=message):
         validate_phrase_checkpoint_schema(payload)
 
 

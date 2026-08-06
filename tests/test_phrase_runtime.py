@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from backend.config import Settings
+from command.catalog import PhraseCatalog, catalog_sha256
+from command.dataset import MANIFEST_ROLES
 from command.inference import (
     ThresholdResolution,
     TorchCommandClassifierBackend,
@@ -102,6 +104,36 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
             _, embedding = model(torch.from_numpy(mouth_clip).unsqueeze(0))
         first_centroid = -embedding if reject_by_distance else embedding
         checkpoint = tmp_path / f"phrase-{reject_by_distance}.pt"
+        phrase_catalog = [
+            {
+                "phraseId": "en_light_on_hello",
+                "text": "Hello, please turn on the light.",
+                "language": "en",
+                "intent": "LIGHT_ON",
+                "enabled": True,
+            },
+            {
+                "phraseId": "zh_chat_meal",
+                "text": "你吃饭了吗？",
+                "language": "zh",
+                "intent": "CHAT_OTHER",
+                "enabled": True,
+            },
+            {
+                "phraseId": "zh_light_on_hello",
+                "text": "你好，请帮我打开灯",
+                "language": "zh",
+                "intent": "LIGHT_ON",
+                "enabled": True,
+            },
+            {
+                "phraseId": "en_chat_meal",
+                "text": "Have you eaten?",
+                "language": "en",
+                "intent": "CHAT_OTHER",
+                "enabled": True,
+            },
+        ]
         save_phrase_checkpoint(
             checkpoint,
             {
@@ -113,36 +145,7 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
                     "zh_light_on_hello",
                     "en_chat_meal",
                 ],
-                "phraseCatalog": [
-                    {
-                        "phraseId": "en_light_on_hello",
-                        "text": "Hello, please turn on the light.",
-                        "language": "en",
-                        "intent": "LIGHT_ON",
-                        "enabled": True,
-                    },
-                    {
-                        "phraseId": "zh_chat_meal",
-                        "text": "你吃饭了吗？",
-                        "language": "zh",
-                        "intent": "CHAT_OTHER",
-                        "enabled": True,
-                    },
-                    {
-                        "phraseId": "zh_light_on_hello",
-                        "text": "你好，请帮我打开灯",
-                        "language": "zh",
-                        "intent": "LIGHT_ON",
-                        "enabled": True,
-                    },
-                    {
-                        "phraseId": "en_chat_meal",
-                        "text": "Have you eaten?",
-                        "language": "en",
-                        "intent": "CHAT_OTHER",
-                        "enabled": True,
-                    },
-                ],
+                "phraseCatalog": phrase_catalog,
                 "featureConfig": {
                     "fps": 25,
                     "height": 96,
@@ -166,6 +169,18 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
                 "classCentroids": torch.cat(
                     [-embedding, -embedding, first_centroid, -embedding], dim=0
                 ),
+                "evidenceLineage": {
+                    "inventorySha256": "a" * 64,
+                    "catalogSha256": catalog_sha256(
+                        PhraseCatalog.from_records(phrase_catalog)
+                    ),
+                    "seed": 17,
+                    "manifestSha256": {
+                        role: str(index) * 64
+                        for index, role in enumerate(MANIFEST_ROLES, start=1)
+                    },
+                    "evidentiary": False,
+                },
                 "trainingSummary": {"seed": 17, "evidentiary": False},
             },
         )
@@ -218,9 +233,7 @@ def test_accepted_decision_uses_exact_catalog_phrase_and_phrase_top_k(
 def test_top1_margin_is_diagnostic_only(backend_factory, mouth_clip):
     decision = backend_factory(
         classifier_bias=(100.0, 1.0, 2.0, 0.0), top1_margin=0.99
-    ).predict(
-        mouth_clip, "zh", {}
-    )
+    ).predict(mouth_clip, "zh", {})
 
     assert decision.margin < 0.99
     assert decision.accepted is True
@@ -288,6 +301,21 @@ def test_both_probability_and_distance_must_pass():
     assert evaluate_phrase_rejection(0.90, 0.30, "a", thresholds) == (
         False,
         "embedding_distance",
+    )
+
+
+@pytest.mark.parametrize(
+    ("probability", "distance"),
+    [(math.nan, 0.1), (math.inf, 0.1), (0.99, math.nan), (0.99, math.inf)],
+)
+def test_non_finite_runtime_scores_fail_closed(probability, distance):
+    # In particular, a passing probability cannot turn NaN cosine distance into
+    # zero and bypass UNKNOWN rejection.
+    thresholds = ThresholdResolution(0.80, {"a": 0.20}, "checkpoint")
+
+    assert evaluate_phrase_rejection(probability, distance, "a", thresholds) == (
+        False,
+        "non_finite_score",
     )
 
 
