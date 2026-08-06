@@ -15,6 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--mouth-roi", type=Path, required=True)
+    parser.add_argument("--language", choices=("zh", "en"), required=True)
     parser.add_argument("--probability-override", type=float, default=None)
     parser.add_argument("--distance-override", type=float, default=None)
     return parser
@@ -36,7 +37,9 @@ def main() -> int:
         )
     )
     mouth_frames = np.load(args.mouth_roi, allow_pickle=False)
-    decision = backend.predict(mouth_frames, {"mouthRoi": str(args.mouth_roi)})
+    decision = backend.predict(
+        mouth_frames, args.language, {"mouthRoi": str(args.mouth_roi)}
+    )
     metadata = decision.metadata
     output = {
         "intent": decision.intent,

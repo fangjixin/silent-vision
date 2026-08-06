@@ -6,14 +6,16 @@ import math
 import os
 import random
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
 from command.catalog import catalog_records, catalog_sha256, load_phrase_catalog
 from command.checkpoint import DECISION_POLICY, SCHEMA_VERSION, save_phrase_checkpoint
+from command.language import score_language_candidates, validate_recognition_language
 from command.model import (
     PARAMETER_CAP,
     build_fixed_phrase_model,
@@ -294,6 +296,7 @@ def train_phrase_classifier(
     manifest_hashes = _validate_manifest_hashes(inventory, manifest_paths)
 
     phrase_ids = tuple(entry.phrase_id for entry in catalog.entries)
+    phrase_languages = tuple(entry.language for entry in catalog.entries)
     phrase_index = {phrase_id: index for index, phrase_id in enumerate(phrase_ids)}
     augmentation_generator = torch.Generator().manual_seed(seed)
     shuffle_generator = torch.Generator().manual_seed(seed)
@@ -346,6 +349,7 @@ def train_phrase_classifier(
         ManifestDataset(Path(calibration_known_manifest), phrase_index),
         centroids,
         phrase_ids,
+        phrase_languages,
         device,
     )
     unknown_records = _calibration_records(
@@ -354,6 +358,7 @@ def train_phrase_classifier(
         ManifestDataset(Path(calibration_unknown_manifest), phrase_index),
         centroids,
         phrase_ids,
+        phrase_languages,
         device,
     )
     calibration = calibrate_thresholds(
@@ -584,7 +589,9 @@ def _training_distance_records(embeddings, labels, centroids, phrase_ids):
     return records
 
 
-def _calibration_records(torch, model, dataset, centroids, phrase_ids, device):
+def _calibration_records(
+    torch, model, dataset, centroids, phrase_ids, phrase_languages, device
+):
     if not dataset:
         return []
     loader = torch.utils.data.DataLoader(
@@ -595,14 +602,18 @@ def _calibration_records(torch, model, dataset, centroids, phrase_ids, device):
         num_workers=0,
     )
     records = []
+    manifest_index = 0
     model.eval()
     with torch.no_grad():
         for frames, labels in loader:
             logits, embeddings = model(frames.to(device))
-            probabilities = torch.softmax(logits, dim=1)
-            confidences, predictions = probabilities.max(dim=1)
             for row_index in range(frames.shape[0]):
-                predicted_index = int(predictions[row_index].item())
+                manifest_record = dataset.records[manifest_index]
+                language = validate_recognition_language(manifest_record.get("language"))
+                scores = score_language_candidates(
+                    logits[row_index].detach().cpu().tolist(), phrase_languages, language
+                )
+                predicted_index = scores.ranked_indices[0]
                 expected_index = int(labels[row_index].item())
                 distance = float(
                     (1.0 - embeddings[row_index].dot(centroids[predicted_index]))
@@ -616,10 +627,11 @@ def _calibration_records(torch, model, dataset, centroids, phrase_ids, device):
                     CalibrationRecord(
                         expected_phrase_id,
                         phrase_ids[predicted_index],
-                        float(confidences[row_index].item()),
+                        scores.probabilities[predicted_index],
                         distance,
                     )
                 )
+                manifest_index += 1
     return records
 
 

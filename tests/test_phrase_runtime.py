@@ -11,6 +11,31 @@ from command.inference import (
     evaluate_phrase_rejection,
     resolve_thresholds,
 )
+from command.language import score_language_candidates, validate_recognition_language
+
+
+def test_language_scores_rank_and_normalize_only_selected_language_candidates():
+    # Catches a regression that scores all classes before language selection, allowing
+    # the excluded English class at index 0 to suppress Chinese recognition.
+    scores = score_language_candidates(
+        np.array([100.0, 1.0, 2.0, 0.0]),
+        ["en", "zh", "zh", "en"],
+        "zh",
+    )
+
+    assert scores.eligible_indices == (1, 2)
+    assert scores.ranked_indices == (2, 1)
+    assert scores.probabilities[2] > scores.probabilities[1]
+    assert sum(scores.probabilities.values()) == pytest.approx(1.0)
+    assert 0 not in scores.ranked_indices
+    assert 0 not in scores.probabilities
+
+
+@pytest.mark.parametrize("language", [None, "unknown", "fr", ["zh"]])
+def test_language_validation_rejects_missing_unknown_and_unsupported_values(language):
+    # Catches a regression that silently defaults malformed language selection.
+    with pytest.raises(ValueError):
+        validate_recognition_language(language)
 
 
 @pytest.fixture
@@ -27,9 +52,12 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
     from command.model import build_fixed_phrase_model
 
     def build(
-        *, reject_by_distance=False, classifier_bias=(10.0, -10.0), top1_margin=0.20
+        *,
+        reject_by_distance=False,
+        classifier_bias=(100.0, 1.0, 2.0, 0.0),
+        top1_margin=0.20,
     ):
-        model = build_fixed_phrase_model(2).eval()
+        model = build_fixed_phrase_model(4).eval()
         with torch.no_grad():
             model.classifier.weight.zero_()
             model.classifier.bias.copy_(torch.tensor(classifier_bias))
@@ -41,8 +69,27 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
             {
                 "schemaVersion": "silent-vision.fixed-phrase.v2",
                 "modelState": model.state_dict(),
-                "phraseIds": ["zh_light_on_hello", "zh_chat_meal"],
+                "phraseIds": [
+                    "en_light_on_hello",
+                    "zh_chat_meal",
+                    "zh_light_on_hello",
+                    "en_chat_meal",
+                ],
                 "phraseCatalog": [
+                    {
+                        "phraseId": "en_light_on_hello",
+                        "text": "Hello, please turn on the light.",
+                        "language": "en",
+                        "intent": "LIGHT_ON",
+                        "enabled": True,
+                    },
+                    {
+                        "phraseId": "zh_chat_meal",
+                        "text": "你吃饭了吗？",
+                        "language": "zh",
+                        "intent": "CHAT_OTHER",
+                        "enabled": True,
+                    },
                     {
                         "phraseId": "zh_light_on_hello",
                         "text": "你好，请帮我打开灯",
@@ -51,9 +98,9 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
                         "enabled": True,
                     },
                     {
-                        "phraseId": "zh_chat_meal",
-                        "text": "你吃饭了吗？",
-                        "language": "zh",
+                        "phraseId": "en_chat_meal",
+                        "text": "Have you eaten?",
+                        "language": "en",
                         "intent": "CHAT_OTHER",
                         "enabled": True,
                     },
@@ -72,11 +119,15 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
                 "decisionThresholds": {
                     "minProbability": 0.80,
                     "maxCosineDistance": {
+                        "en_light_on_hello": 0.05,
                         "zh_light_on_hello": 0.05,
                         "zh_chat_meal": 0.05,
+                        "en_chat_meal": 0.05,
                     },
                 },
-                "classCentroids": torch.cat([first_centroid, -embedding], dim=0),
+                "classCentroids": torch.cat(
+                    [-embedding, -embedding, first_centroid, -embedding], dim=0
+                ),
                 "trainingSummary": {"seed": 17, "evidentiary": False},
             },
         )
@@ -97,7 +148,7 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
 def test_accepted_decision_uses_exact_catalog_phrase_and_phrase_top_k(
     backend_factory, mouth_clip
 ):
-    decision = backend_factory().predict(mouth_clip, {})
+    decision = backend_factory().predict(mouth_clip, "zh", {})
 
     assert decision.accepted is True
     assert decision.executable is True
@@ -106,6 +157,11 @@ def test_accepted_decision_uses_exact_catalog_phrase_and_phrase_top_k(
     assert decision.metadata["matchedPhrase"] == "你好，请帮我打开灯"
     assert decision.metadata["displayText"] == "你好，请帮我打开灯"
     assert decision.metadata["language"] == "zh"
+    assert decision.metadata["selectedLanguage"] == "zh"
+    assert decision.metadata["eligiblePhraseIds"] == [
+        "zh_chat_meal",
+        "zh_light_on_hello",
+    ]
     assert decision.metadata["backend"] == "torch"
     assert decision.metadata["thresholdSource"] == "checkpoint"
     assert decision.topK[0] == {
@@ -115,11 +171,17 @@ def test_accepted_decision_uses_exact_catalog_phrase_and_phrase_top_k(
         "intent": "LIGHT_ON",
         "confidence": pytest.approx(decision.confidence),
     }
+    assert [item["phraseId"] for item in decision.topK] == [
+        "zh_light_on_hello",
+        "zh_chat_meal",
+    ]
 
 
 def test_top1_margin_is_diagnostic_only(backend_factory, mouth_clip):
-    decision = backend_factory(classifier_bias=(1.0, -1.0), top1_margin=0.99).predict(
-        mouth_clip, {}
+    decision = backend_factory(
+        classifier_bias=(100.0, 1.0, 2.0, 0.0), top1_margin=0.99
+    ).predict(
+        mouth_clip, "zh", {}
     )
 
     assert decision.margin < 0.99
@@ -131,6 +193,7 @@ def test_rejected_decision_is_unknown_and_omits_matched_phrase_text(
 ):
     decision = backend_factory(reject_by_distance=True).predict(
         mouth_clip,
+        "zh",
         {
             "phraseId": "stale-id",
             "matchedPhrase": "stale matched text",
@@ -146,11 +209,17 @@ def test_rejected_decision_is_unknown_and_omits_matched_phrase_text(
     assert "phraseId" not in decision.metadata
     assert "matchedPhrase" not in decision.metadata
     assert "displayText" not in decision.metadata
+    assert all("text" not in item for item in decision.topK)
     assert decision.metadata["predictedPhraseId"] == "zh_light_on_hello"
     assert decision.metadata["probability"] == pytest.approx(decision.confidence)
     assert decision.metadata["openSetDistance"] == pytest.approx(2.0)
     assert decision.metadata["thresholdSource"] == "checkpoint"
     assert decision.metadata["rejectionReason"] == "embedding_distance"
+    assert decision.metadata["selectedLanguage"] == "zh"
+    assert decision.metadata["eligiblePhraseIds"] == [
+        "zh_chat_meal",
+        "zh_light_on_hello",
+    ]
 
 
 def test_torch_builder_propagates_rocm_guard_failure(tmp_path, monkeypatch):

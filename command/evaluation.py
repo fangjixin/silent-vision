@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from command.language import validate_recognition_language
+
 UNKNOWN_PHRASE_ID = "UNKNOWN"
 
 
@@ -200,6 +202,7 @@ def _validate_partition_records(
 ) -> None:
     for record in records:
         phrase_id = record.get("phrase_id")
+        validate_recognition_language(record.get("language"))
         if known and (not isinstance(phrase_id, str) or not phrase_id):
             raise ValueError("evaluation-known.jsonl records require phrase_id")
         if not known and phrase_id is not None:
@@ -210,8 +213,10 @@ def _evaluate_dataset(backend, dataset, manifest_path: Path) -> list[EvaluationR
     records: list[EvaluationRecord] = []
     for index, manifest_record in enumerate(dataset.records):
         frames, _ = dataset[index]
+        language = validate_recognition_language(manifest_record.get("language"))
         decision = backend.predict(
             frames.numpy(),
+            language,
             {
                 "manifest": str(manifest_path),
                 "sampleId": manifest_record.get("sample_id"),

@@ -6,15 +6,79 @@ import subprocess
 import sys
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from command.evaluation import (
     EvaluationRecord,
+    _evaluate_dataset,
+    _validate_partition_records,
     build_evaluation_report,
     evaluate_checkpoint,
 )
+
+
+def test_evaluation_manifest_records_require_a_supported_language():
+    # Catches a regression that evaluates a clip without the language needed to
+    # select its eligible phrase classes.
+    _validate_partition_records(
+        [{"phrase_id": "zh_light_on", "language": "zh"}], known=True
+    )
+    _validate_partition_records(
+        [{"phrase_id": None, "language": "en"}], known=False
+    )
+
+    with pytest.raises(ValueError, match="language"):
+        _validate_partition_records([{"phrase_id": "zh_light_on"}], known=True)
+    with pytest.raises(ValueError, match="language"):
+        _validate_partition_records(
+            [{"phrase_id": None, "language": "unknown"}], known=False
+        )
+
+
+def test_evaluation_passes_manifest_language_to_the_classifier():
+    # Catches a regression that records language in the manifest but omits it
+    # from the classifier call that produces the decision.
+    class Frames:
+        def numpy(self):
+            return "frames"
+
+    class Dataset:
+        def __init__(self):
+            self.records = [
+                {
+                    "sample_id": "sample-1",
+                    "phrase_id": "zh_light_on",
+                    "language": "zh",
+                }
+            ]
+
+        def __getitem__(self, index):
+            return Frames(), 0
+
+    received = []
+
+    class Backend:
+        def predict(self, frames, language, metadata):
+            received.append((frames, language, metadata))
+            return SimpleNamespace(
+                accepted=True,
+                confidence=0.99,
+                metadata={"predictedPhraseId": "zh_light_on", "openSetDistance": 0.01},
+            )
+
+    records = _evaluate_dataset(Backend(), Dataset(), Path("known.jsonl"))
+
+    assert records[0].predicted_phrase_id == "zh_light_on"
+    assert received == [
+        (
+            "frames",
+            "zh",
+            {"manifest": "known.jsonl", "sampleId": "sample-1"},
+        )
+    ]
 
 
 def test_evaluation_metrics_keep_acceptance_and_accuracy_separate():
@@ -106,7 +170,7 @@ def test_evaluate_checkpoint_rejects_non_final_partition_names_before_gpu_work(
             "validate_command_classifier.py",
             ("--checkpoint", "--known-manifest", "--unknown-manifest", "--output"),
         ),
-        ("infer_command_clip.py", ("--checkpoint", "--mouth-roi")),
+        ("infer_command_clip.py", ("--checkpoint", "--mouth-roi", "--language")),
     ],
 )
 def test_phrase_cli_help_runs_without_torch(script_name, required_options):
@@ -198,6 +262,7 @@ def rocm_evaluation_artifacts(tmp_path_factory):
         json.dumps(
             {
                 "phrase_id": "zh_light_on_hello",
+                "language": "zh",
                 "mouth_roi_npy": str(mouth_roi),
                 "sha256": record_digest,
             }
@@ -209,6 +274,7 @@ def rocm_evaluation_artifacts(tmp_path_factory):
         json.dumps(
             {
                 "phrase_id": None,
+                "language": "zh",
                 "mouth_roi_npy": str(mouth_roi),
                 "sha256": record_digest,
             }
@@ -276,6 +342,8 @@ def test_single_clip_inference_prints_phrase_runtime_contract(
             str(paths["checkpoint"]),
             "--mouth-roi",
             str(paths["mouth_roi"]),
+            "--language",
+            "zh",
         ],
         capture_output=True,
         text=True,

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-from hashlib import sha256
-from pathlib import Path
 import subprocess
 import sys
+from contextlib import nullcontext
+from hashlib import sha256
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,12 +14,108 @@ import pytest
 from command.training import (
     CalibrationRecord,
     ManifestDataset,
+    _calibration_records,
     _validate_manifest_hashes,
     calibrate_thresholds,
     compute_class_centroids,
     require_rocm,
     train_phrase_classifier,
 )
+
+
+class _FakeScalar:
+    def __init__(self, value):
+        self.value = float(value)
+
+    def clamp(self, lower, upper):
+        return _FakeScalar(min(upper, max(lower, self.value)))
+
+    def __rsub__(self, other):
+        return _FakeScalar(float(other) - self.value)
+
+    def item(self):
+        return self.value
+
+
+class _FakeVector:
+    def __init__(self, values):
+        self.values = list(values)
+
+    def __getitem__(self, index):
+        return _FakeScalar(self.values[index])
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def tolist(self):
+        return list(self.values)
+
+    def dot(self, other):
+        return _FakeScalar(sum(left * right for left, right in zip(self.values, other.values)))
+
+
+class _FakeMatrix:
+    def __init__(self, rows):
+        self.rows = [list(row) for row in rows]
+        self.shape = (len(self.rows), len(self.rows[0]))
+
+    def __getitem__(self, index):
+        return _FakeVector(self.rows[index])
+
+    def max(self, dim):
+        assert dim == 1
+        return (
+            _FakeVector([max(row) for row in self.rows]),
+            _FakeVector([row.index(max(row)) for row in self.rows]),
+        )
+
+
+class _FakeFrames:
+    shape = (1, 96, 96)
+
+    def to(self, device):
+        return self
+
+
+class _FakeModel:
+    def eval(self):
+        return None
+
+    def __call__(self, input_frames):
+        return (
+            _FakeMatrix([[100.0, 1.0, 2.0, 0.0]]),
+            _FakeMatrix([[1.0, 0.0]]),
+        )
+
+
+def test_calibration_scores_only_the_manifest_selected_language():
+    # Catches a regression that calibrates against all classes, allowing the
+    # excluded English class with logit 100 to become the prediction.
+    frames = _FakeFrames()
+    labels = _FakeVector([2])
+    dataset = SimpleNamespace(records=[{"language": "zh"}])
+    model = _FakeModel()
+    fake_torch = SimpleNamespace(
+        utils=SimpleNamespace(
+            data=SimpleNamespace(DataLoader=lambda *args, **kwargs: [(frames, labels)])
+        ),
+        no_grad=lambda: nullcontext(),
+    )
+
+    records = _calibration_records(
+        fake_torch,
+        model,
+        dataset,
+        _FakeMatrix([[1.0, 0.0]] * 4),
+        ("en_light_on", "zh_chat", "zh_light_on", "en_chat"),
+        ("en", "zh", "zh", "en"),
+        "cpu",
+    )
+
+    assert records[0].predicted_phrase_id == "zh_light_on"
 
 
 def _write_manifest_file(path: Path, content: str) -> str:
@@ -317,6 +414,7 @@ def test_rocm_training_writes_checkpoint_and_external_run_summary(tmp_path):
         train_records.append(
             {
                 "phrase_id": entry.phrase_id,
+                "language": entry.language,
                 "mouth_roi_npy": str(train_clip),
                 "sha256": sha256(train_clip.read_bytes()).hexdigest(),
             }
@@ -324,6 +422,7 @@ def test_rocm_training_writes_checkpoint_and_external_run_summary(tmp_path):
         calibration_records.append(
             {
                 "phrase_id": entry.phrase_id,
+                "language": entry.language,
                 "mouth_roi_npy": str(calibration_clip),
                 "sha256": sha256(calibration_clip.read_bytes()).hexdigest(),
             }

@@ -92,6 +92,15 @@ def test_builds_prototype_backend(tmp_path, monkeypatch):
     assert backend.__class__.__name__ == "PrototypeCommandClassifierBackend"
 
 
+def test_fake_backend_rejects_an_invalid_selected_language():
+    # Catches a regression that lets callers bypass the common language contract.
+    backend = build_command_classifier(Settings(command_backend="fake"))
+    frames = np.zeros((2, 96, 96), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="recognition language"):
+        backend.predict(frames, "unknown", {})
+
+
 def test_settings_support_only_new_checkpoint_driven_torch_backend(tmp_path):
     checkpoint = tmp_path / "fixed-phrase.pt"
 
@@ -140,7 +149,7 @@ def test_prototype_backend_returns_matched_display_text_and_language(
     )
 
     backend = build_command_classifier(Settings())
-    decision = backend.predict(frames, metadata={"profileId": "abc"})
+    decision = backend.predict(frames, language="zh", metadata={"profileId": "abc"})
 
     assert decision.accepted is True
     assert decision.intent == CommandIntent.LIGHT_ON
@@ -173,7 +182,7 @@ def test_prototype_backend_uses_global_samples_even_when_profile_id_is_present(
     )
 
     backend = build_command_classifier(Settings())
-    decision = backend.predict(frames, metadata={"profileId": "abc"})
+    decision = backend.predict(frames, language="zh", metadata={"profileId": "abc"})
 
     assert decision.accepted is True
     assert decision.intent == CommandIntent.LIGHT_ON
@@ -182,13 +191,46 @@ def test_prototype_backend_uses_global_samples_even_when_profile_id_is_present(
     assert decision.metadata["displayText"] == "请开灯"
 
 
+def test_prototype_backend_matches_only_samples_for_the_selected_language(
+    tmp_path, monkeypatch
+):
+    # Catches a regression that lets an equal-scoring English sample create a
+    # cross-language margin rejection for a Chinese request.
+    monkeypatch.setenv("PERSISTENCE_ROOT", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BACKEND", "prototype")
+
+    frames = np.zeros((25, 96, 96), dtype=np.uint8)
+    frames[:, 36:60, 32:64] = 255
+    save_prototype_sample(
+        tmp_path,
+        profile_id="global",
+        intent=CommandIntent.LIGHT_OFF.value,
+        mouth_frames=frames,
+        metadata={"language": "en", "phrase": "Turn off the light."},
+    )
+    save_prototype_sample(
+        tmp_path,
+        profile_id="global",
+        intent=CommandIntent.LIGHT_ON.value,
+        mouth_frames=frames,
+        metadata={"language": "zh", "phrase": "请开灯"},
+    )
+
+    backend = build_command_classifier(Settings())
+    decision = backend.predict(frames, language="zh", metadata={})
+
+    assert decision.accepted is True
+    assert decision.intent == CommandIntent.LIGHT_ON
+    assert decision.metadata["matchedPhrase"] == "请开灯"
+
+
 def test_prototype_backend_rejects_without_samples(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSISTENCE_ROOT", str(tmp_path))
     monkeypatch.setenv("COMMAND_BACKEND", "prototype")
 
     backend = build_command_classifier(Settings())
     frames = np.zeros((25, 96, 96), dtype=np.uint8)
-    decision = backend.predict(frames, metadata={"profileId": "abc"})
+    decision = backend.predict(frames, language="zh", metadata={"profileId": "abc"})
 
     assert decision.intent == "UNKNOWN"
     assert decision.accepted is False

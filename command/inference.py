@@ -14,6 +14,7 @@ import numpy as np
 from backend.config import Settings
 from backend.schemas import CommandDecision
 from command.labels import COMMAND_LABELS, EXECUTABLE_INTENTS, CommandIntent
+from command.language import score_language_candidates, validate_recognition_language
 from command.prototype import (
     extract_roi_embedding,
     load_profile_prototypes,
@@ -27,7 +28,10 @@ logger = logging.getLogger(__name__)
 
 class CommandClassifierBackend(Protocol):
     def predict(
-        self, mouth_frames: np.ndarray, metadata: dict[str, object]
+        self,
+        mouth_frames: np.ndarray,
+        language: str,
+        metadata: dict[str, object],
     ) -> CommandDecision:
         raise NotImplementedError
 
@@ -156,8 +160,12 @@ class FakeCommandClassifierBackend:
         self.settings = settings
 
     def predict(
-        self, mouth_frames: np.ndarray, metadata: dict[str, object]
+        self,
+        mouth_frames: np.ndarray,
+        language: str,
+        metadata: dict[str, object],
     ) -> CommandDecision:
+        validate_recognition_language(language)
         motion = (
             float(np.abs(np.diff(mouth_frames.astype("float32"), axis=0)).mean())
             if len(mouth_frames) > 1
@@ -212,6 +220,10 @@ class TorchCommandClassifierBackend:
         self.catalog_by_phrase_id = {
             entry.phrase_id: entry for entry in self.loaded_checkpoint.catalog.entries
         }
+        self.phrase_languages = tuple(
+            self.catalog_by_phrase_id[phrase_id].language
+            for phrase_id in self.loaded_checkpoint.phrase_ids
+        )
         self.centroids = torch.as_tensor(
             self.loaded_checkpoint.centroids,
             device=self.device,
@@ -219,7 +231,10 @@ class TorchCommandClassifierBackend:
         )
 
     def predict(
-        self, mouth_frames: np.ndarray, metadata: dict[str, object]
+        self,
+        mouth_frames: np.ndarray,
+        language: str,
+        metadata: dict[str, object],
     ) -> CommandDecision:
         started = perf_counter()
         frames = np.asarray(mouth_frames)
@@ -227,14 +242,13 @@ class TorchCommandClassifierBackend:
         with self.torch.inference_mode():
             logits_tensor, embedding = self.loaded_checkpoint.model(tensor)
             logits_tensor = logits_tensor.squeeze(0)
-            probabilities = self.torch.softmax(logits_tensor, dim=0)
-            ordered_indices = self.torch.argsort(probabilities, descending=True)
-
-        best_index = int(ordered_indices[0].item())
-        best_probability = float(probabilities[best_index].item())
+        logits = [float(value) for value in logits_tensor.detach().cpu().tolist()]
+        scores = score_language_candidates(logits, self.phrase_languages, language)
+        best_index = scores.ranked_indices[0]
+        best_probability = scores.probabilities[best_index]
         second_probability = (
-            float(probabilities[int(ordered_indices[1].item())].item())
-            if ordered_indices.numel() > 1
+            scores.probabilities[scores.ranked_indices[1]]
+            if len(scores.ranked_indices) > 1
             else 0.0
         )
         predicted_phrase_id = self.loaded_checkpoint.phrase_ids[best_index]
@@ -251,19 +265,29 @@ class TorchCommandClassifierBackend:
         )
         margin = round(max(0.0, best_probability - second_probability), 6)
         top_k = [
-            self._top_k_item(
-                int(index.item()), float(probabilities[int(index.item())].item())
-            )
-            for index in ordered_indices[:3]
+            self._top_k_item(index, scores.probabilities[index])
+            for index in scores.ranked_indices[:3]
         ]
         result_metadata = dict(metadata)
-        for reserved_key in ("phraseId", "matchedPhrase", "displayText", "language"):
+        for reserved_key in (
+            "phraseId",
+            "matchedPhrase",
+            "displayText",
+            "language",
+            "selectedLanguage",
+            "eligiblePhraseIds",
+        ):
             result_metadata.pop(reserved_key, None)
         result_metadata.update(
             {
                 "backend": "torch",
                 "latencyMs": int((perf_counter() - started) * 1000),
                 "predictedPhraseId": predicted_phrase_id,
+                "selectedLanguage": scores.selected_language,
+                "eligiblePhraseIds": [
+                    self.loaded_checkpoint.phrase_ids[index]
+                    for index in scores.eligible_indices
+                ],
                 "probability": best_probability,
                 "openSetDistance": distance,
                 "thresholdSource": self.thresholds.source,
@@ -281,10 +305,13 @@ class TorchCommandClassifierBackend:
                 executable=False,
                 confidence=best_probability,
                 margin=margin,
-                topK=top_k,
-                logits=[
-                    float(value) for value in logits_tensor.detach().cpu().tolist()
+                topK=[
+                    self._top_k_item(
+                        index, scores.probabilities[index], include_text=False
+                    )
+                    for index in scores.ranked_indices[:3]
                 ],
+                logits=logits,
                 reason=rejection_reason or "rejected",
                 metadata=result_metadata,
             )
@@ -305,23 +332,27 @@ class TorchCommandClassifierBackend:
             confidence=best_probability,
             margin=margin,
             topK=top_k,
-            logits=[float(value) for value in logits_tensor.detach().cpu().tolist()],
+            logits=logits,
             reason="accepted executable intent"
             if executable
             else "accepted non-executable intent",
             metadata=result_metadata,
         )
 
-    def _top_k_item(self, index: int, confidence: float) -> dict[str, object]:
+    def _top_k_item(
+        self, index: int, confidence: float, *, include_text: bool = True
+    ) -> dict[str, object]:
         phrase_id = self.loaded_checkpoint.phrase_ids[index]
         entry = self.catalog_by_phrase_id[phrase_id]
-        return {
+        item: dict[str, object] = {
             "phraseId": entry.phrase_id,
-            "text": entry.text,
             "language": entry.language,
             "intent": entry.intent.value,
             "confidence": confidence,
         }
+        if include_text:
+            item["text"] = entry.text
+        return item
 
 
 class PrototypeCommandClassifierBackend:
@@ -330,8 +361,12 @@ class PrototypeCommandClassifierBackend:
         self.root = settings.persistence_root
 
     def predict(
-        self, mouth_frames: np.ndarray, metadata: dict[str, object]
+        self,
+        mouth_frames: np.ndarray,
+        language: str,
+        metadata: dict[str, object],
     ) -> CommandDecision:
+        selected_language = validate_recognition_language(language)
         started = perf_counter()
         embedding = extract_roi_embedding(
             mouth_frames, feature_dim=self.settings.prototype_feature_dim
@@ -349,6 +384,12 @@ class PrototypeCommandClassifierBackend:
             except ValueError:
                 continue
             samples = load_profile_prototypes(self.root, sanitized_profile)
+            samples = [
+                sample
+                for sample in samples
+                if _clean_language(sample.metadata.get("language"))
+                == selected_language
+            ]
             if not samples:
                 continue
             match = match_prototypes(
@@ -382,6 +423,7 @@ class PrototypeCommandClassifierBackend:
             "backend": "prototype",
             "profileId": profile_id,
             "profileScope": last_scope,
+            "selectedLanguage": selected_language,
             "latencyMs": int((perf_counter() - started) * 1000),
         }
         if last_match.accepted:
