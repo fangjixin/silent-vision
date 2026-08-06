@@ -331,6 +331,12 @@ def test_frontend_serves_language_and_catalog_calibration_controls(app):
     assert 'id="calibration-phrase-id"' in response.text
     assert 'id="calibration-unknown-phrase"' in response.text
     assert 'id="calibration-intent"' not in response.text
+    assert response.text.count('<option value="zh">Chinese</option>') == 2
+    assert '<option value="en">English</option>' in response.text
+    assert ">中文<" not in response.text
+    assert '<select id="calibration-phrase-id" disabled>' in response.text
+    assert '<button id="save-sample" type="button" disabled>' in response.text
+    assert "Loading phrases..." in response.text
 
 
 def test_websocket_allows_wildcard_origin():

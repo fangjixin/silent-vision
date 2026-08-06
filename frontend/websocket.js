@@ -17,10 +17,75 @@ const state = {
   streaming: false,
   connectionGeneration: 0,
   phase: "idle",
+  catalogAuthority: "loading",
 };
 
 function setText(id, value) {
   document.getElementById(id).textContent = value;
+}
+
+function isValidPhraseCatalog(records) {
+  return Array.isArray(records)
+    && records.some((phrase) => phrase?.enabled === true)
+    && records.every((phrase) => (
+      phrase
+      && typeof phrase.phraseId === "string"
+      && phrase.phraseId.length > 0
+      && typeof phrase.text === "string"
+      && phrase.text.length > 0
+      && ["zh", "en"].includes(phrase.language)
+      && typeof phrase.intent === "string"
+      && typeof phrase.enabled === "boolean"
+    ));
+}
+
+function hasCatalogAuthority() {
+  return ["http", "websocket"].includes(state.catalogAuthority);
+}
+
+function syncCalibrationAvailability() {
+  const phraseSelect = document.getElementById("calibration-phrase-id");
+  const saveSample = document.getElementById("save-sample");
+  const busy = ["preparing", "recording", "analyzing"].includes(state.phase);
+  const available = hasCatalogAuthority();
+  phraseSelect.disabled = !available;
+  saveSample.disabled = !available || busy;
+  if (!available) {
+    const unknownPhrase = document.getElementById("calibration-unknown-phrase");
+    unknownPhrase.disabled = true;
+    unknownPhrase.required = false;
+  }
+}
+
+function showCatalogMessage(message) {
+  const phraseSelect = document.getElementById("calibration-phrase-id");
+  const option = document.createElement("option");
+  option.textContent = message;
+  option.selected = true;
+  phraseSelect.replaceChildren(option);
+  syncCalibrationAvailability();
+}
+
+function applyPhraseCatalog(records, authority) {
+  if (!isValidPhraseCatalog(records)) throw new Error("invalid phrase catalog");
+  if (authority === "http" && state.catalogAuthority === "websocket") return;
+  state.parameters.phraseCatalog = records;
+  state.catalogAuthority = authority;
+  renderCalibrationPhraseOptions();
+}
+
+async function loadPhraseCatalog() {
+  try {
+    const response = await fetch("/api/phrases");
+    if (!response.ok) throw new Error("phrase catalog request failed");
+    const payload = await response.json();
+    applyPhraseCatalog(payload.phrases, "http");
+  } catch (error) {
+    if (state.catalogAuthority === "websocket") return;
+    console.error("Silent Vision phrase catalog failed", error);
+    state.catalogAuthority = "error";
+    showCatalogMessage("Unable to load phrases");
+  }
 }
 
 async function createSession() {
@@ -117,12 +182,12 @@ function renderCalibrationPhraseOptions() {
   unknownOption.value = "UNKNOWN";
   unknownOption.textContent = "UNKNOWN";
   phraseSelect.append(unknownOption);
-  phraseSelect.disabled = false;
 
   if ([...phraseSelect.options].some((option) => option.value === selectedPhraseId)) {
     phraseSelect.value = selectedPhraseId;
   }
   updateUnknownPhraseInput();
+  syncCalibrationAvailability();
 }
 
 function updateUnknownPhraseInput() {
@@ -137,7 +202,7 @@ function updateUnknownPhraseInput() {
 function handleEvent(event) {
   if (event.type === "session.ready") {
     state.parameters = event.parameters;
-    renderCalibrationPhraseOptions();
+    applyPhraseCatalog(event.parameters.phraseCatalog, "websocket");
   }
   if (event.type === "vision.result") setText("visionStatus", event.faceDetected ? "mouth detected" : "mouth reused");
   if (event.type === "clip.received") setText("bufferStatus", `${event.bytes} bytes`);
@@ -176,6 +241,7 @@ function handleEvent(event) {
 
 function resetUiForNewStream() {
   state.phase = "preparing";
+  syncCalibrationAvailability();
   setText("cameraStatus", "starting");
   setText("socketStatus", "connecting");
   setText("visionStatus", "waiting");
@@ -215,7 +281,7 @@ function setStoppedUiState() {
   setText("resultOutput", "");
   document.getElementById("startButton").disabled = false;
   document.getElementById("stopButton").disabled = true;
-  document.getElementById("save-sample").disabled = false;
+  syncCalibrationAvailability();
 }
 
 function setAnalyzingUiState() {
@@ -229,7 +295,7 @@ function setAnalyzingUiState() {
   setText("agentStatus", "waiting");
   document.getElementById("startButton").disabled = true;
   document.getElementById("stopButton").disabled = false;
-  document.getElementById("save-sample").disabled = true;
+  syncCalibrationAvailability();
 }
 
 async function recordAndSendClip(connectionGeneration) {
@@ -246,6 +312,7 @@ async function recordAndSendClip(connectionGeneration) {
     language: document.getElementById("recognition-language").value,
   }));
   state.phase = "recording";
+  syncCalibrationAvailability();
   state.streaming = true;
   setText("cameraStatus", "recording");
   setText("bufferStatus", "recording clip");
@@ -280,6 +347,7 @@ async function recordAndSendCalibrationClip(connectionGeneration) {
     scope: "global",
   }));
   state.phase = "recording";
+  syncCalibrationAvailability();
   state.streaming = true;
   setText("cameraStatus", "recording sample");
   setText("bufferStatus", "recording calibration");
@@ -302,7 +370,7 @@ function setDoneUiState() {
   setText("agentStatus", "done");
   document.getElementById("startButton").disabled = false;
   document.getElementById("stopButton").disabled = true;
-  document.getElementById("save-sample").disabled = false;
+  syncCalibrationAvailability();
 }
 
 function stopCamera() {
@@ -348,6 +416,7 @@ document.getElementById("startButton").addEventListener("click", async () => {
 });
 
 document.getElementById("save-sample").addEventListener("click", async () => {
+  if (!hasCatalogAuthority() || document.getElementById("save-sample").disabled) return;
   const phraseSelect = document.getElementById("calibration-phrase-id");
   const unknownPhrase = document.getElementById("calibration-unknown-phrase");
   if (phraseSelect.value === "UNKNOWN" && !unknownPhrase.value.trim()) {
@@ -359,7 +428,6 @@ document.getElementById("save-sample").addEventListener("click", async () => {
   resetUiForNewStream();
   document.getElementById("startButton").disabled = true;
   document.getElementById("stopButton").disabled = false;
-  document.getElementById("save-sample").disabled = true;
   try {
     await connect(connectionGeneration);
     if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
@@ -382,3 +450,5 @@ document.getElementById("calibration-language").addEventListener("change", rende
 document.getElementById("calibration-phrase-id").addEventListener("change", updateUnknownPhraseInput);
 
 document.getElementById("profile-id").textContent = `Profile: ${state.profileId}`;
+syncCalibrationAvailability();
+void loadPhraseCatalog();

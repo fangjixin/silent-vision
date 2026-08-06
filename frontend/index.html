@@ -21,7 +21,7 @@
       <label class="recognition-language">
         Recognition language
         <select id="recognition-language">
-          <option value="zh">中文</option>
+          <option value="zh">Chinese</option>
           <option value="en">English</option>
         </select>
       </label>
@@ -43,19 +43,21 @@
         <label>
           Recording language
           <select id="calibration-language">
-            <option value="zh">中文</option>
+            <option value="zh">Chinese</option>
             <option value="en">English</option>
           </select>
         </label>
         <label>
           Phrase
-          <select id="calibration-phrase-id" disabled></select>
+          <select id="calibration-phrase-id" disabled>
+            <option selected>Loading phrases...</option>
+          </select>
         </label>
         <label>
           Custom phrase for UNKNOWN
           <input id="calibration-unknown-phrase" placeholder="Enter the phrase you recorded" disabled>
         </label>
-        <button id="save-sample" type="button">Save Sample</button>
+        <button id="save-sample" type="button" disabled>Save Sample</button>
         <p id="profile-id"></p>
         <pre id="calibration-result"></pre>
       </section>
