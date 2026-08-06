@@ -1,14 +1,22 @@
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from pypdf import PdfReader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.build_contest_bundle import build_bundle
 
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+POSTER_SCENE_RELATIVE_PATHS = (
+    Path("submission/assets/poster/post-surgery.png"),
+    Path("submission/assets/poster/rehabilitation.png"),
+    Path("submission/assets/poster/accessible-communication.png"),
+    Path("submission/assets/poster/silent-control-input.png"),
+)
 
 
 def _public_markdown_files(bundle: Path) -> list[Path]:
@@ -43,8 +51,37 @@ def test_bundle_contains_complete_runtime_and_public_materials(tmp_path):
     assert target.joinpath("submission/Silent-Vision-Project-Profile.pdf").exists()
     assert target.joinpath("submission/Silent-Vision-Poster.pdf").exists()
     assert target.joinpath("submission/Silent-Vision-Poster.png").exists()
+    assert all(target.joinpath(path).is_file() for path in POSTER_SCENE_RELATIVE_PATHS)
     assert target.joinpath("submission/demo-video-script.md").exists()
     assert copied
+
+
+def test_bundle_rebuilds_poster_from_repository_owned_assets(tmp_path):
+    target = tmp_path / "submissions" / "track1-silent-vision"
+    build_bundle(Path.cwd(), target)
+    rebuilt = target / "rebuilt-poster.pdf"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path; "
+                "from scripts.generate_submission_assets import build_poster_pdf; "
+                "build_poster_pdf(Path('rebuilt-poster.pdf'))"
+            ),
+        ],
+        cwd=target,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert rebuilt.is_file()
+    reader = PdfReader(rebuilt)
+    assert len(reader.pages) == 1
+    text = reader.pages[0].extract_text() or ""
+    assert "A VOICE WITHOUT SOUND." in text
+    assert "PERSONALIZED FIXED-PHRASE PROTOTYPE" in text
 
 
 def test_bundle_public_markdown_links_resolve_inside_bundle(tmp_path):
