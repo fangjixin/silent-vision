@@ -115,6 +115,39 @@ def test_explicit_unknown_is_not_a_training_class(tmp_path):
     assert '"sample_id": "u"' in unknown_text
 
 
+@pytest.mark.parametrize("language", [None, "", "unknown", "fr"])
+def test_unknown_source_requires_a_supported_language(tmp_path, language):
+    source = save_sample(tmp_path, "u", "What time is it?", "UNKNOWN", 3)
+    metadata = json.loads(source.read_text(encoding="utf-8"))
+    if language is None:
+        metadata.pop("language")
+    else:
+        metadata["language"] = language
+    source.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="recognition language must be 'zh' or 'en'"):
+        build_dataset_manifests(
+            tmp_path, Path("command/phrase_catalog.json"), tmp_path / "out", True, 17
+        )
+
+
+def test_known_source_uses_catalog_language_instead_of_source_metadata(tmp_path):
+    source = save_sample(
+        tmp_path, "english-light", "Hello, please turn on the light.", "LIGHT_ON", 4
+    )
+    metadata = json.loads(source.read_text(encoding="utf-8"))
+    metadata["language"] = "zh"
+    source.write_text(json.dumps(metadata), encoding="utf-8")
+
+    build_dataset_manifests(
+        tmp_path, Path("command/phrase_catalog.json"), tmp_path / "out", True, 17
+    )
+
+    record = json.loads((tmp_path / "out/train.jsonl").read_text(encoding="utf-8"))
+    assert record["phrase_id"] == "en_light_on_hello"
+    assert record["language"] == "en"
+
+
 def test_inventory_includes_per_phrase_counts_and_split_membership(tmp_path):
     for index in range(3):
         save_sample(tmp_path, f"light-{index}", "你好，请帮我打开灯", "LIGHT_ON", index)

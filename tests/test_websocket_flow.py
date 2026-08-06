@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -35,8 +38,10 @@ def patch_clip_pipeline(monkeypatch):
 class StubClassifier:
     def __init__(self, decision: CommandDecision):
         self.decision = decision
+        self.languages = []
 
-    def predict(self, mouth_frames, metadata):
+    def predict(self, mouth_frames, language, metadata):
+        self.languages.append(language)
         return self.decision.model_copy(
             update={"metadata": self.decision.metadata | metadata}
         )
@@ -50,8 +55,12 @@ def collect_clip_messages(app):
         f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
     ) as websocket:
         assert websocket.receive_json()["type"] == "session.ready"
-        websocket.send_json({"type": "clip.start", "profileId": "global"})
-        assert websocket.receive_json()["type"] == "clip.started"
+        websocket.send_json(
+            {"type": "clip.start", "profileId": "global", "language": "zh"}
+        )
+        started = websocket.receive_json()
+        assert started["type"] == "clip.started"
+        assert started["language"] == "zh"
         websocket.send_bytes(b"fake-webm")
         for _ in range(20):
             message = websocket.receive_json()
@@ -63,8 +72,11 @@ def collect_clip_messages(app):
 
 def send_stubbed_clip(app, monkeypatch, decision):
     patch_clip_pipeline(monkeypatch)
-    app.state.command_classifier = StubClassifier(decision)
-    return collect_clip_messages(app)
+    classifier = StubClassifier(decision)
+    app.state.command_classifier = classifier
+    messages = collect_clip_messages(app)
+    assert classifier.languages == ["zh"]
+    return messages
 
 
 def test_accepted_light_phrase_executes_with_exact_display_text(app, monkeypatch):
@@ -250,9 +262,12 @@ def test_fake_websocket_flow_reaches_agent_result(app, monkeypatch):
     ) as websocket:
         ready = websocket.receive_json()
         assert ready["type"] == "session.ready"
-        websocket.send_json({"type": "clip.start", "profileId": "test-profile"})
+        websocket.send_json(
+            {"type": "clip.start", "profileId": "test-profile", "language": "zh"}
+        )
         started = websocket.receive_json()
         assert started["type"] == "clip.started"
+        assert started["language"] == "zh"
         websocket.send_bytes(b"fake-webm")
         seen = set()
         for _ in range(20):
@@ -315,7 +330,9 @@ def test_invalid_clip_processing_is_recoverable_websocket_error(monkeypatch):
         f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
     ) as websocket:
         assert websocket.receive_json()["type"] == "session.ready"
-        websocket.send_json({"type": "clip.start"})
+        websocket.send_json(
+            {"type": "clip.start", "profileId": "global", "language": "zh"}
+        )
         assert websocket.receive_json()["type"] == "clip.started"
         websocket.send_bytes(b"bad-webm")
         assert websocket.receive_json()["type"] == "clip.received"
@@ -325,3 +342,217 @@ def test_invalid_clip_processing_is_recoverable_websocket_error(monkeypatch):
         assert error["recoverable"] is True
         websocket.send_json({"type": "ping"})
         assert websocket.receive_json()["type"] == "pong"
+
+
+@pytest.mark.parametrize("language", [None, "unknown", "fr", 3])
+def test_invalid_clip_language_fails_closed_before_bytes_are_processed(
+    tmp_path, monkeypatch, language
+):
+    calls = {"decode": 0, "classify": 0}
+
+    def fail_if_decoded(data, target_fps):
+        calls["decode"] += 1
+        raise AssertionError("invalid clip request must not decode bytes")
+
+    class FailIfClassified:
+        def predict(self, mouth_frames, selected_language, metadata):
+            calls["classify"] += 1
+            raise AssertionError("invalid clip request must not classify bytes")
+
+    monkeypatch.setattr("api.websocket.decode_video_clip", fail_if_decoded)
+    app = create_app(Settings(command_backend="fake", persistence_root=tmp_path))
+    app.state.command_classifier = FailIfClassified()
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+    payload = {"type": "clip.start", "profileId": "global"}
+    if language is not None:
+        payload["language"] = language
+
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json(payload)
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["stage"] == "clip"
+        assert error["code"] == "INVALID_REQUEST"
+        assert error["recoverable"] is True
+        websocket.send_bytes(b"must-be-ignored")
+        websocket.send_json({"type": "ping"})
+        assert websocket.receive_json()["type"] == "pong"
+
+    assert calls == {"decode": 0, "classify": 0}
+
+
+def test_session_ready_exposes_the_canonical_phrase_catalog(app):
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
+        ready = websocket.receive_json()
+
+    assert ready["parameters"]["phraseCatalog"] == [
+        {
+            "phraseId": "zh_light_on_hello",
+            "text": "你好，请帮我打开灯",
+            "language": "zh",
+            "intent": "LIGHT_ON",
+            "enabled": True,
+        },
+        {
+            "phraseId": "zh_chat_meal",
+            "text": "你吃饭了吗？",
+            "language": "zh",
+            "intent": "CHAT_OTHER",
+            "enabled": True,
+        },
+        {
+            "phraseId": "en_light_on_hello",
+            "text": "Hello, please turn on the light.",
+            "language": "en",
+            "intent": "LIGHT_ON",
+            "enabled": True,
+        },
+        {
+            "phraseId": "en_chat_meal",
+            "text": "Have you eaten?",
+            "language": "en",
+            "intent": "CHAT_OTHER",
+            "enabled": True,
+        },
+    ]
+
+
+def _record_calibration(app, request):
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json(request)
+        started = websocket.receive_json()
+        assert started["type"] == "calibration.started"
+        websocket.send_bytes(b"fake-webm")
+        assert websocket.receive_json()["type"] == "clip.received"
+        saved = websocket.receive_json()
+        assert saved["type"] == "calibration.saved"
+    return started, saved
+
+
+def test_registered_calibration_uses_catalog_owned_metadata(tmp_path, monkeypatch):
+    patch_clip_pipeline(monkeypatch)
+    app = create_app(Settings(command_backend="fake", persistence_root=tmp_path))
+
+    started, saved = _record_calibration(
+        app,
+        {
+            "type": "calibration.start",
+            "profileId": "global",
+            "language": "en",
+            "phraseId": "en_chat_meal",
+        },
+    )
+
+    metadata = json.loads(
+        (Path(saved["samplePath"]) / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert started["phraseId"] == "en_chat_meal"
+    assert metadata["phraseId"] == "en_chat_meal"
+    assert metadata["phrase"] == "Have you eaten?"
+    assert metadata["language"] == "en"
+    assert metadata["intent"] == "CHAT_OTHER"
+
+
+def test_registered_calibration_rejects_phrase_language_mismatch(tmp_path, monkeypatch):
+    decoded = False
+
+    def fail_if_decoded(data, target_fps):
+        nonlocal decoded
+        decoded = True
+        raise AssertionError("mismatched calibration must not decode bytes")
+
+    monkeypatch.setattr("api.websocket.decode_video_clip", fail_if_decoded)
+    app = create_app(Settings(command_backend="fake", persistence_root=tmp_path))
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json(
+            {
+                "type": "calibration.start",
+                "profileId": "global",
+                "language": "zh",
+                "phraseId": "en_chat_meal",
+            }
+        )
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["stage"] == "calibration"
+        assert error["code"] == "INVALID_REQUEST"
+        assert error["recoverable"] is True
+        websocket.send_bytes(b"must-be-ignored")
+        websocket.send_json({"type": "ping"})
+        assert websocket.receive_json()["type"] == "pong"
+
+    assert decoded is False
+
+
+@pytest.mark.parametrize("phrase", ["", "   "])
+def test_unknown_calibration_requires_a_non_empty_phrase(tmp_path, phrase):
+    app = create_app(Settings(command_backend="fake", persistence_root=tmp_path))
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json(
+            {
+                "type": "calibration.start",
+                "profileId": "global",
+                "language": "en",
+                "phraseId": "UNKNOWN",
+                "phrase": phrase,
+            }
+        )
+        error = websocket.receive_json()
+
+    assert error["type"] == "error"
+    assert error["stage"] == "calibration"
+    assert error["code"] == "INVALID_REQUEST"
+    assert error["recoverable"] is True
+
+
+def test_unknown_calibration_retains_free_form_phrase_and_language(
+    tmp_path, monkeypatch
+):
+    patch_clip_pipeline(monkeypatch)
+    app = create_app(Settings(command_backend="fake", persistence_root=tmp_path))
+
+    started, saved = _record_calibration(
+        app,
+        {
+            "type": "calibration.start",
+            "profileId": "global",
+            "language": "en",
+            "phraseId": "UNKNOWN",
+            "phrase": "What time is it?",
+        },
+    )
+
+    metadata = json.loads(
+        (Path(saved["samplePath"]) / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert started["phraseId"] == "UNKNOWN"
+    assert metadata["phraseId"] == "UNKNOWN"
+    assert metadata["phrase"] == "What time is it?"
+    assert metadata["language"] == "en"
+    assert metadata["intent"] == "UNKNOWN"
