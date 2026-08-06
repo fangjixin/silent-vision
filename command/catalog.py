@@ -2,7 +2,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 from command.labels import CommandIntent
@@ -54,6 +54,12 @@ class PhraseCatalog:
             raise ValueError("catalog has no enabled phrases")
         return cls(tuple(entries))
 
+    def by_id(self, phrase_id: str) -> PhraseEntry:
+        for entry in self.entries:
+            if entry.phrase_id == phrase_id:
+                return entry
+        raise ValueError("unknown phraseId")
+
 
 def normalize_phrase(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", text).strip()
@@ -68,6 +74,21 @@ def load_phrase_catalog(path: Path) -> PhraseCatalog:
 
 
 def catalog_sha256(catalog: PhraseCatalog) -> str:
-    records = [{**asdict(entry), "intent": entry.intent.value} for entry in catalog.entries]
-    encoded = json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    records = catalog_records(catalog)
+    encoded = json.dumps(
+        records, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def catalog_records(catalog: PhraseCatalog) -> list[dict[str, object]]:
+    return [
+        {
+            "phraseId": entry.phrase_id,
+            "text": entry.text,
+            "language": entry.language,
+            "intent": entry.intent.value,
+            "enabled": entry.enabled,
+        }
+        for entry in catalog.entries
+    ]

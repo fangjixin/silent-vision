@@ -14,6 +14,20 @@
       "language": "zh",
       "intent": "CHAT_OTHER",
       "enabled": true
+    },
+    {
+      "phraseId": "en_light_on_hello",
+      "text": "Hello, please turn on the light.",
+      "language": "en",
+      "intent": "LIGHT_ON",
+      "enabled": true
+    },
+    {
+      "phraseId": "en_chat_meal",
+      "text": "Have you eaten?",
+      "language": "en",
+      "intent": "CHAT_OTHER",
+      "enabled": true
     }
   ]
 }

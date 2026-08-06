@@ -39,7 +39,7 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
         save_phrase_checkpoint(
             checkpoint,
             {
-                "schemaVersion": "silent-vision.fixed-phrase.v1",
+                "schemaVersion": "silent-vision.fixed-phrase.v2",
                 "modelState": model.state_dict(),
                 "phraseIds": ["zh_light_on_hello", "zh_chat_meal"],
                 "phraseCatalog": [
@@ -65,6 +65,10 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
                     "downsample": 16,
                 },
                 "modelConfig": {"embeddingDim": 64, "parameterCap": 150000},
+                "decisionPolicy": {
+                    "languageSelectionRequired": True,
+                    "probabilityNormalization": "selected-language-softmax",
+                },
                 "decisionThresholds": {
                     "minProbability": 0.80,
                     "maxCosineDistance": {

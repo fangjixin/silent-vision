@@ -27,7 +27,9 @@ def patch_clip_pipeline(monkeypatch):
             duration_ms=1000,
         ),
     )
-    monkeypatch.setattr("api.websocket.extract_mouth_roi_clip", lambda **kwargs: FakeRoiClip())
+    monkeypatch.setattr(
+        "api.websocket.extract_mouth_roi_clip", lambda **kwargs: FakeRoiClip()
+    )
 
 
 class StubClassifier:
@@ -164,7 +166,7 @@ def test_real_torch_websocket_accepts_catalog_text_and_rejects_without_execution
     save_phrase_checkpoint(
         checkpoint,
         {
-            "schemaVersion": "silent-vision.fixed-phrase.v1",
+            "schemaVersion": "silent-vision.fixed-phrase.v2",
             "modelState": model.state_dict(),
             "phraseIds": ["zh_light_on_hello", "zh_chat_meal"],
             "phraseCatalog": [
@@ -190,6 +192,10 @@ def test_real_torch_websocket_accepts_catalog_text_and_rejects_without_execution
                 "downsample": 16,
             },
             "modelConfig": {"embeddingDim": 64, "parameterCap": 150000},
+            "decisionPolicy": {
+                "languageSelectionRequired": True,
+                "probabilityNormalization": "selected-language-softmax",
+            },
             "decisionThresholds": {
                 "minProbability": 0.80,
                 "maxCosineDistance": {
@@ -239,7 +245,9 @@ def test_fake_websocket_flow_reaches_agent_result(app, monkeypatch):
     client = TestClient(app)
     session_response = client.post("/api/sessions")
     session_id = session_response.json()["sessionId"]
-    with client.websocket_connect(f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}) as websocket:
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
         ready = websocket.receive_json()
         assert ready["type"] == "session.ready"
         websocket.send_json({"type": "clip.start", "profileId": "test-profile"})
@@ -260,9 +268,13 @@ def test_second_active_websocket_takes_over_slot(app):
     client = TestClient(app)
     first_id = client.post("/api/sessions").json()["sessionId"]
     second_id = client.post("/api/sessions").json()["sessionId"]
-    with client.websocket_connect(f"/ws/{first_id}", headers={"origin": "http://localhost:8000"}) as first:
+    with client.websocket_connect(
+        f"/ws/{first_id}", headers={"origin": "http://localhost:8000"}
+    ) as first:
         assert first.receive_json()["type"] == "session.ready"
-        with client.websocket_connect(f"/ws/{second_id}", headers={"origin": "http://localhost:8000"}) as second:
+        with client.websocket_connect(
+            f"/ws/{second_id}", headers={"origin": "http://localhost:8000"}
+        ) as second:
             assert second.receive_json()["type"] == "session.ready"
             first.send_json({"type": "ping"})
             replaced = first.receive_json()
@@ -299,7 +311,9 @@ def test_invalid_clip_processing_is_recoverable_websocket_error(monkeypatch):
     client = TestClient(app)
     session_id = client.post("/api/sessions").json()["sessionId"]
 
-    with client.websocket_connect(f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}) as websocket:
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
         assert websocket.receive_json()["type"] == "session.ready"
         websocket.send_json({"type": "clip.start"})
         assert websocket.receive_json()["type"] == "clip.started"

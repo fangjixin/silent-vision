@@ -150,7 +150,7 @@ def rocm_evaluation_artifacts(tmp_path_factory):
     save_phrase_checkpoint(
         checkpoint,
         {
-            "schemaVersion": "silent-vision.fixed-phrase.v1",
+            "schemaVersion": "silent-vision.fixed-phrase.v2",
             "modelState": model.state_dict(),
             "phraseIds": ["zh_light_on_hello", "zh_chat_meal"],
             "phraseCatalog": [
@@ -176,6 +176,10 @@ def rocm_evaluation_artifacts(tmp_path_factory):
                 "downsample": 16,
             },
             "modelConfig": {"embeddingDim": 64, "parameterCap": 150000},
+            "decisionPolicy": {
+                "languageSelectionRequired": True,
+                "probabilityNormalization": "selected-language-softmax",
+            },
             "decisionThresholds": {
                 "minProbability": 0.99,
                 "maxCosineDistance": {
@@ -244,10 +248,17 @@ def test_checkpoint_evaluation_uses_resolved_checkpoint_thresholds_and_hashes(
             "zh_chat_meal": 0.05,
         },
     }
-    assert report["checkpointSha256"] == sha256(paths["checkpoint"].read_bytes()).hexdigest()
+    assert (
+        report["checkpointSha256"]
+        == sha256(paths["checkpoint"].read_bytes()).hexdigest()
+    )
     assert report["manifestSha256"] == {
-        "evaluation-known.jsonl": sha256(paths["known_manifest"].read_bytes()).hexdigest(),
-        "evaluation-unknown.jsonl": sha256(paths["unknown_manifest"].read_bytes()).hexdigest(),
+        "evaluation-known.jsonl": sha256(
+            paths["known_manifest"].read_bytes()
+        ).hexdigest(),
+        "evaluation-unknown.jsonl": sha256(
+            paths["unknown_manifest"].read_bytes()
+        ).hexdigest(),
     }
     assert json.loads(output.read_text(encoding="utf-8")) == report
 

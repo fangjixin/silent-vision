@@ -6,16 +6,19 @@ import math
 import os
 import random
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 
-from command.catalog import catalog_sha256, load_phrase_catalog
-from command.checkpoint import SCHEMA_VERSION, save_phrase_checkpoint
-from command.model import PARAMETER_CAP, build_fixed_phrase_model, count_trainable_parameters
-
+from command.catalog import catalog_records, catalog_sha256, load_phrase_catalog
+from command.checkpoint import DECISION_POLICY, SCHEMA_VERSION, save_phrase_checkpoint
+from command.model import (
+    PARAMETER_CAP,
+    build_fixed_phrase_model,
+    count_trainable_parameters,
+)
 
 BATCH_SIZE = 4
 LEARNING_RATE = 3e-4
@@ -61,7 +64,9 @@ def calibrate_thresholds(
     training_records: Sequence[CalibrationRecord] = (),
 ) -> dict[str, Any]:
     ordered_phrase_ids = tuple(phrase_ids)
-    if not ordered_phrase_ids or len(set(ordered_phrase_ids)) != len(ordered_phrase_ids):
+    if not ordered_phrase_ids or len(set(ordered_phrase_ids)) != len(
+        ordered_phrase_ids
+    ):
         raise ValueError("phrase_ids must be a non-empty unique sequence")
 
     radii: dict[str, float] = {}
@@ -70,7 +75,8 @@ def calibrate_thresholds(
         correct_distances = [
             _distance(record)
             for record in known_records
-            if record.expected_phrase_id == phrase_id and record.predicted_phrase_id == phrase_id
+            if record.expected_phrase_id == phrase_id
+            and record.predicted_phrase_id == phrase_id
         ]
         if correct_distances:
             radii[phrase_id] = max(correct_distances)
@@ -80,10 +86,14 @@ def calibrate_thresholds(
                 f"phrase {phrase_id!r} has no correctly classified known-calibration record"
             )
         training_distances = [
-            _distance(record) for record in training_records if record.expected_phrase_id == phrase_id
+            _distance(record)
+            for record in training_records
+            if record.expected_phrase_id == phrase_id
         ]
         if not training_distances:
-            raise ValueError(f"phrase {phrase_id!r} has no training distance for smoke fallback")
+            raise ValueError(
+                f"phrase {phrase_id!r} has no training distance for smoke fallback"
+            )
         radii[phrase_id] = _percentile(training_distances, 0.95)
         fallback_phrase_ids.append(phrase_id)
 
@@ -108,14 +118,23 @@ def calibrate_thresholds(
         accepted_unknown = _accepted_unknown_count(unknown_records, radii, threshold)
         false_accept_rate = accepted_unknown / len(unknown_records)
         accepted_known = _accepted_known_count(known_records, radii, threshold)
-        candidates.append((threshold, false_accept_rate, accepted_known, accepted_unknown))
+        candidates.append(
+            (threshold, false_accept_rate, accepted_known, accepted_unknown)
+        )
 
-    eligible = [candidate for candidate in candidates if candidate[1] <= UNKNOWN_FALSE_ACCEPT_TARGET]
+    eligible = [
+        candidate
+        for candidate in candidates
+        if candidate[1] <= UNKNOWN_FALSE_ACCEPT_TARGET
+    ]
     if eligible:
         chosen = max(eligible, key=lambda candidate: (candidate[2], candidate[0]))
         target_met = True
     else:
-        chosen = min(candidates, key=lambda candidate: (candidate[1], -candidate[2], -candidate[0]))
+        chosen = min(
+            candidates,
+            key=lambda candidate: (candidate[1], -candidate[2], -candidate[0]),
+        )
         target_met = False
 
     threshold, false_accept_rate, accepted_known, accepted_unknown = chosen
@@ -165,7 +184,9 @@ class ManifestDataset:
         frames = torch.from_numpy(np.asarray(array)).clone()
         if self.augment:
             if self.generator is None:
-                raise ValueError("training augmentation requires a seeded torch.Generator")
+                raise ValueError(
+                    "training augmentation requires a seeded torch.Generator"
+                )
             frames = augment_clip(frames, self.generator)
         phrase_id = record.get("phrase_id")
         if phrase_id is None:
@@ -174,7 +195,9 @@ class ManifestDataset:
             try:
                 label = self.phrase_index[str(phrase_id)]
             except KeyError as exc:
-                raise ValueError(f"manifest phrase_id is not in catalog: {phrase_id!r}") from exc
+                raise ValueError(
+                    f"manifest phrase_id is not in catalog: {phrase_id!r}"
+                ) from exc
         return frames, label
 
 
@@ -182,7 +205,9 @@ def augment_clip(frames, generator):
     import torch
 
     augmented = frames.to(dtype=torch.float32)
-    brightness = torch.empty((), dtype=torch.float32).uniform_(0.9, 1.1, generator=generator)
+    brightness = torch.empty((), dtype=torch.float32).uniform_(
+        0.9, 1.1, generator=generator
+    )
     augmented = (augmented * brightness).clamp(0.0, 255.0)
 
     shift_y, shift_x = (
@@ -194,10 +219,14 @@ def augment_clip(frames, generator):
         operation = int(torch.randint(0, 3, (1,), generator=generator).item())
         if operation:
             frame_index = int(
-                torch.randint(1, augmented.shape[0] - 1, (1,), generator=generator).item()
+                torch.randint(
+                    1, augmented.shape[0] - 1, (1,), generator=generator
+                ).item()
             )
             if operation == 1:
-                augmented = torch.cat((augmented[:frame_index], augmented[frame_index + 1 :]))
+                augmented = torch.cat(
+                    (augmented[:frame_index], augmented[frame_index + 1 :])
+                )
             else:
                 augmented = torch.cat(
                     (
@@ -269,7 +298,10 @@ def train_phrase_classifier(
     augmentation_generator = torch.Generator().manual_seed(seed)
     shuffle_generator = torch.Generator().manual_seed(seed)
     training_dataset = ManifestDataset(
-        Path(train_manifest), phrase_index, augment=True, generator=augmentation_generator
+        Path(train_manifest),
+        phrase_index,
+        augment=True,
+        generator=augmentation_generator,
     )
     if not training_dataset:
         raise ValueError("training manifest has no samples")
@@ -302,7 +334,9 @@ def train_phrase_classifier(
     training_embeddings, training_labels = _collect_embeddings(
         torch, model, plain_training_dataset, device
     )
-    centroids = compute_class_centroids(training_embeddings, training_labels, len(phrase_ids))
+    centroids = compute_class_centroids(
+        training_embeddings, training_labels, len(phrase_ids)
+    )
     training_records = _training_distance_records(
         training_embeddings, training_labels, centroids, phrase_ids
     )
@@ -346,9 +380,10 @@ def train_phrase_classifier(
             name: value.detach().cpu() for name, value in model.state_dict().items()
         },
         "phraseIds": list(phrase_ids),
-        "phraseCatalog": [_catalog_record(entry) for entry in catalog.entries],
+        "phraseCatalog": catalog_records(catalog),
         "featureConfig": {"fps": 25, "height": 96, "width": 96, "downsample": 16},
         "modelConfig": {"embeddingDim": 64, "parameterCap": PARAMETER_CAP},
+        "decisionPolicy": dict(DECISION_POLICY),
         "decisionThresholds": {
             "minProbability": calibration["minProbability"],
             "maxCosineDistance": calibration["maxCosineDistance"],
@@ -376,7 +411,9 @@ def _distance(record: CalibrationRecord) -> float:
     return distance
 
 
-def _accepted(record: CalibrationRecord, radii: dict[str, float], threshold: float) -> bool:
+def _accepted(
+    record: CalibrationRecord, radii: dict[str, float], threshold: float
+) -> bool:
     radius = radii.get(record.predicted_phrase_id)
     confidence = float(record.confidence)
     if radius is None or not math.isfinite(confidence):
@@ -435,7 +472,9 @@ def _read_manifest(path: Path) -> list[dict[str, Any]]:
                 continue
             record = json.loads(line)
             if not isinstance(record, dict):
-                raise ValueError(f"manifest line {line_number} must be a JSON object: {path}")
+                raise ValueError(
+                    f"manifest line {line_number} must be a JSON object: {path}"
+                )
             records.append(record)
     return records
 
@@ -461,13 +500,21 @@ def _validate_manifest_hashes(
     expected_hashes = inventory.get("manifestSha256")
     if not isinstance(expected_hashes, dict):
         raise ValueError("inventory manifestSha256 must be an object")
-    manifest_roles = ("train.jsonl", "calibration-known.jsonl", "calibration-unknown.jsonl")
+    manifest_roles = (
+        "train.jsonl",
+        "calibration-known.jsonl",
+        "calibration-unknown.jsonl",
+    )
     if len(manifest_paths) != len(manifest_roles):
-        raise ValueError("exactly three training/calibration manifest paths are required")
+        raise ValueError(
+            "exactly three training/calibration manifest paths are required"
+        )
     actual_hashes: dict[str, str] = {}
     for role, path in zip(manifest_roles, manifest_paths):
         if path.name != role:
-            raise ValueError(f"{role} argument must reference a file named {role}, got {path.name}")
+            raise ValueError(
+                f"{role} argument must reference a file named {role}, got {path.name}"
+            )
         digest = _sha256_file(path)
         if expected_hashes.get(role) != digest:
             raise ValueError(f"manifest SHA-256 does not match inventory role: {role}")
@@ -485,7 +532,9 @@ def _validate_sample_sha256(record: dict[str, Any]) -> None:
     try:
         int(expected_digest, 16)
     except ValueError as exc:
-        raise ValueError("manifest record requires sha256 as 64 hexadecimal characters") from exc
+        raise ValueError(
+            "manifest record requires sha256 as 64 hexadecimal characters"
+        ) from exc
     actual_digest = _sha256_file(Path(path_value))
     if actual_digest != expected_digest.lower():
         raise ValueError(f"mouth ROI SHA-256 does not match manifest: {path_value}")
@@ -527,7 +576,9 @@ def _training_distance_records(embeddings, labels, centroids, phrase_ids):
     records = []
     for embedding, label in zip(embeddings, labels):
         class_index = int(label.item())
-        distance = float((1.0 - embedding.dot(centroids[class_index])).clamp(0.0, 2.0).item())
+        distance = float(
+            (1.0 - embedding.dot(centroids[class_index])).clamp(0.0, 2.0).item()
+        )
         phrase_id = phrase_ids[class_index]
         records.append(CalibrationRecord(phrase_id, phrase_id, 1.0, distance))
     return records
@@ -554,14 +605,13 @@ def _calibration_records(torch, model, dataset, centroids, phrase_ids, device):
                 predicted_index = int(predictions[row_index].item())
                 expected_index = int(labels[row_index].item())
                 distance = float(
-                    (
-                        1.0
-                        - embeddings[row_index].dot(centroids[predicted_index])
-                    )
+                    (1.0 - embeddings[row_index].dot(centroids[predicted_index]))
                     .clamp(0.0, 2.0)
                     .item()
                 )
-                expected_phrase_id = phrase_ids[expected_index] if expected_index >= 0 else None
+                expected_phrase_id = (
+                    phrase_ids[expected_index] if expected_index >= 0 else None
+                )
                 records.append(
                     CalibrationRecord(
                         expected_phrase_id,
@@ -571,17 +621,6 @@ def _calibration_records(torch, model, dataset, centroids, phrase_ids, device):
                     )
                 )
     return records
-
-
-def _catalog_record(entry) -> dict[str, Any]:
-    record = asdict(entry)
-    return {
-        "phraseId": record["phrase_id"],
-        "text": record["text"],
-        "language": record["language"],
-        "intent": entry.intent.value,
-        "enabled": record["enabled"],
-    }
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -598,7 +637,9 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             delete=False,
         ) as temporary_file:
             temporary_path = Path(temporary_file.name)
-            json.dump(payload, temporary_file, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump(
+                payload, temporary_file, ensure_ascii=False, indent=2, sort_keys=True
+            )
             temporary_file.write("\n")
             temporary_file.flush()
             os.fsync(temporary_file.fileno())

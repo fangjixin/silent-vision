@@ -13,8 +13,11 @@ from typing import Any
 from command.catalog import PhraseCatalog
 from command.model import PARAMETER_CAP
 
-
-SCHEMA_VERSION = "silent-vision.fixed-phrase.v1"
+SCHEMA_VERSION = "silent-vision.fixed-phrase.v2"
+DECISION_POLICY = {
+    "languageSelectionRequired": True,
+    "probabilityNormalization": "selected-language-softmax",
+}
 REQUIRED_KEYS = frozenset(
     {
         "schemaVersion",
@@ -23,6 +26,7 @@ REQUIRED_KEYS = frozenset(
         "phraseCatalog",
         "featureConfig",
         "modelConfig",
+        "decisionPolicy",
         "decisionThresholds",
         "classCentroids",
         "trainingSummary",
@@ -51,7 +55,9 @@ class LoadedPhraseCheckpoint:
     training_summary: dict[str, Any]
 
 
-def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhraseCheckpointSchema:
+def validate_phrase_checkpoint_schema(
+    payload: dict[str, Any],
+) -> ValidatedPhraseCheckpointSchema:
     if not isinstance(payload, dict):
         raise ValueError("checkpoint payload must be a dictionary")
     missing = sorted(REQUIRED_KEYS - payload.keys())
@@ -59,6 +65,7 @@ def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhras
         raise ValueError(f"checkpoint missing required keys: {', '.join(missing)}")
     if payload["schemaVersion"] != SCHEMA_VERSION:
         raise ValueError(f"unsupported checkpoint schema: {payload['schemaVersion']!r}")
+    _validate_decision_policy(payload["decisionPolicy"])
     if not isinstance(payload["modelState"], Mapping):
         raise ValueError("modelState must be a mapping")
 
@@ -66,7 +73,10 @@ def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhras
     if not isinstance(phrase_ids_value, (list, tuple)) or not phrase_ids_value:
         raise ValueError("phraseIds must be a non-empty ordered sequence")
     phrase_ids = tuple(phrase_ids_value)
-    if any(not isinstance(phrase_id, str) or not phrase_id.strip() for phrase_id in phrase_ids):
+    if any(
+        not isinstance(phrase_id, str) or not phrase_id.strip()
+        for phrase_id in phrase_ids
+    ):
         raise ValueError("phraseIds must contain non-blank strings")
     if len(set(phrase_ids)) != len(phrase_ids):
         raise ValueError("phraseIds must be unique")
@@ -74,7 +84,10 @@ def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhras
     catalog_records = payload["phraseCatalog"]
     if not isinstance(catalog_records, list):
         raise ValueError("phraseCatalog must be a list")
-    if any(record.get("enabled", True) and record.get("intent") == "UNKNOWN" for record in catalog_records):
+    if any(
+        record.get("enabled", True) and record.get("intent") == "UNKNOWN"
+        for record in catalog_records
+    ):
         raise ValueError("checkpoint phraseCatalog cannot train UNKNOWN")
     catalog = PhraseCatalog.from_records(catalog_records)
     catalog_phrase_ids = tuple(entry.phrase_id for entry in catalog.entries)
@@ -82,7 +95,9 @@ def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhras
         raise ValueError("phraseIds must match enabled catalog order")
 
     feature_config = _mapping(payload["featureConfig"], "featureConfig")
-    _require_keys(feature_config, {"fps", "height", "width", "downsample"}, "featureConfig")
+    _require_keys(
+        feature_config, {"fps", "height", "width", "downsample"}, "featureConfig"
+    )
     if feature_config["fps"] != 25:
         raise ValueError("featureConfig fps must be 25")
     expected_spatial_config = {"height": 96, "width": 96, "downsample": 16}
@@ -92,8 +107,12 @@ def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhras
 
     model_config = _mapping(payload["modelConfig"], "modelConfig")
     _require_keys(model_config, {"embeddingDim", "parameterCap"}, "modelConfig")
-    embedding_dim = _positive_integer(model_config["embeddingDim"], "modelConfig embeddingDim")
-    parameter_cap = _positive_integer(model_config["parameterCap"], "modelConfig parameterCap")
+    embedding_dim = _positive_integer(
+        model_config["embeddingDim"], "modelConfig embeddingDim"
+    )
+    parameter_cap = _positive_integer(
+        model_config["parameterCap"], "modelConfig parameterCap"
+    )
     if parameter_cap != PARAMETER_CAP:
         raise ValueError(f"modelConfig parameterCap must be {PARAMETER_CAP}")
 
@@ -106,7 +125,9 @@ def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhras
         )
 
     thresholds = dict(_mapping(payload["decisionThresholds"], "decisionThresholds"))
-    _require_keys(thresholds, {"minProbability", "maxCosineDistance"}, "decisionThresholds")
+    _require_keys(
+        thresholds, {"minProbability", "maxCosineDistance"}, "decisionThresholds"
+    )
     minimum_probability = _finite_number(thresholds["minProbability"], "minProbability")
     if not 0.0 <= minimum_probability <= 1.0:
         raise ValueError("minProbability must be between 0 and 1")
@@ -116,7 +137,9 @@ def validate_phrase_checkpoint_schema(payload: dict[str, Any]) -> ValidatedPhras
         raise ValueError("maxCosineDistance keys must match phraseIds")
     normalized_distances: dict[str, float] = {}
     for phrase_id in phrase_ids:
-        distance = _finite_number(distances[phrase_id], f"maxCosineDistance[{phrase_id!r}]")
+        distance = _finite_number(
+            distances[phrase_id], f"maxCosineDistance[{phrase_id!r}]"
+        )
         if not 0.0 <= distance <= 2.0:
             raise ValueError("maxCosineDistance values must be between 0 and 2")
         normalized_distances[phrase_id] = distance
@@ -138,7 +161,9 @@ def save_phrase_checkpoint(path: Path, payload: dict[str, Any]) -> str:
     import torch
 
     validated = validate_phrase_checkpoint_schema(payload)
-    _validate_classifier_head(payload["modelState"], len(validated.phrase_ids), validated.embedding_dim)
+    _validate_classifier_head(
+        payload["modelState"], len(validated.phrase_ids), validated.embedding_dim
+    )
     _build_validated_model(payload, validated)
 
     path = Path(path)
@@ -146,7 +171,11 @@ def save_phrase_checkpoint(path: Path, payload: dict[str, Any]) -> str:
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="wb", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
         ) as temporary_file:
             temporary_path = Path(temporary_file.name)
             torch.save(payload, temporary_file)
@@ -163,8 +192,14 @@ def load_phrase_checkpoint(path: Path, device: str) -> LoadedPhraseCheckpoint:
     import torch
 
     payload = torch.load(Path(path), map_location=device)
-    if isinstance(payload, dict) and "schemaVersion" not in payload and {"model", "labels"} <= payload.keys():
-        raise ValueError("legacy intent-only checkpoint; retrain with the fixed phrase classifier")
+    if (
+        isinstance(payload, dict)
+        and "schemaVersion" not in payload
+        and {"model", "labels"} <= payload.keys()
+    ):
+        raise ValueError(
+            "legacy intent-only checkpoint; retrain with the fixed phrase classifier"
+        )
     if not isinstance(payload, dict):
         raise ValueError("checkpoint payload must be a dictionary")
 
@@ -189,7 +224,9 @@ def _validate_head_from_unvalidated_payload(payload: dict[str, Any]) -> None:
         return
     phrase_ids = payload["phraseIds"]
     model_config = payload["modelConfig"]
-    if not isinstance(phrase_ids, (list, tuple)) or not isinstance(model_config, Mapping):
+    if not isinstance(phrase_ids, (list, tuple)) or not isinstance(
+        model_config, Mapping
+    ):
         return
     embedding_dim = model_config.get("embeddingDim")
     if not isinstance(embedding_dim, int) or isinstance(embedding_dim, bool):
@@ -197,7 +234,9 @@ def _validate_head_from_unvalidated_payload(payload: dict[str, Any]) -> None:
     _validate_classifier_head(payload["modelState"], len(phrase_ids), embedding_dim)
 
 
-def _validate_classifier_head(model_state: Any, class_count: int, embedding_dim: int) -> None:
+def _validate_classifier_head(
+    model_state: Any, class_count: int, embedding_dim: int
+) -> None:
     if not isinstance(model_state, Mapping):
         return
     weight = model_state.get("classifier.weight")
@@ -209,20 +248,28 @@ def _validate_classifier_head(model_state: Any, class_count: int, embedding_dim:
             f"classifier head weight shape must be [{class_count}, {embedding_dim}], got {list(weight_shape)}"
         )
     if bias_shape is not None and tuple(bias_shape) != (class_count,):
-        raise ValueError(f"classifier head bias shape must be [{class_count}], got {list(bias_shape)}")
+        raise ValueError(
+            f"classifier head bias shape must be [{class_count}], got {list(bias_shape)}"
+        )
 
 
-def _build_validated_model(payload: dict[str, Any], validated: ValidatedPhraseCheckpointSchema) -> Any:
+def _build_validated_model(
+    payload: dict[str, Any], validated: ValidatedPhraseCheckpointSchema
+) -> Any:
     from command.model import build_fixed_phrase_model, count_trainable_parameters
 
     model = build_fixed_phrase_model(len(validated.phrase_ids), validated.embedding_dim)
     parameter_count = count_trainable_parameters(model)
     if parameter_count >= PARAMETER_CAP:
-        raise ValueError(f"model has {parameter_count} trainable parameters, violating cap {PARAMETER_CAP}")
+        raise ValueError(
+            f"model has {parameter_count} trainable parameters, violating cap {PARAMETER_CAP}"
+        )
     try:
         model.load_state_dict(payload["modelState"], strict=True)
     except RuntimeError as exc:
-        raise ValueError(f"checkpoint modelState is incompatible with the fixed phrase model: {exc}") from exc
+        raise ValueError(
+            f"checkpoint modelState is incompatible with the fixed phrase model: {exc}"
+        ) from exc
     return model
 
 
@@ -230,6 +277,20 @@ def _mapping(value: Any, name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{name} must be a mapping")
     return value
+
+
+def _validate_decision_policy(value: Any) -> None:
+    policy = _mapping(value, "decisionPolicy")
+    if set(policy) != set(DECISION_POLICY):
+        raise ValueError(
+            "decisionPolicy must contain exactly languageSelectionRequired and probabilityNormalization"
+        )
+    if policy["languageSelectionRequired"] is not True:
+        raise ValueError("decisionPolicy languageSelectionRequired must be True")
+    if policy["probabilityNormalization"] != "selected-language-softmax":
+        raise ValueError(
+            "decisionPolicy probabilityNormalization must be selected-language-softmax"
+        )
 
 
 def _require_keys(mapping: Mapping[str, Any], keys: set[str], name: str) -> None:
