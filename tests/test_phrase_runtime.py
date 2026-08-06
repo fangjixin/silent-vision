@@ -94,7 +94,7 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
     def build(
         *,
         reject_by_distance=False,
-        classifier_bias=(100.0, 1.0, 2.0, 0.0),
+        classifier_bias=(100.0, 1.0, 3.0, 0.0),
         top1_margin=0.20,
     ):
         model = build_fixed_phrase_model(4).eval()
@@ -232,7 +232,7 @@ def test_accepted_decision_uses_exact_catalog_phrase_and_phrase_top_k(
 
 def test_top1_margin_is_diagnostic_only(backend_factory, mouth_clip):
     decision = backend_factory(
-        classifier_bias=(100.0, 1.0, 2.0, 0.0), top1_margin=0.99
+        classifier_bias=(100.0, 1.0, 3.0, 0.0), top1_margin=0.99
     ).predict(mouth_clip, "zh", {})
 
     assert decision.margin < 0.99
