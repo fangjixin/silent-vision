@@ -675,7 +675,7 @@ def build_poster_pdf(output: Path) -> None:
         )
         if index < 4:
             _arrow(pdf, x + step_width + 3, y + 72, x + step_width + gap - 3, y + 72)
-    _label(pdf, "Where it fits", 60, height - 601)
+    _label(pdf, "Where it fits", 60, height - 580)
     fit_width = (width - 148) / 3
     fits = [
         ("Creator control input", "Another application can map an accepted intent to capture, cue, or editing actions."),
@@ -686,7 +686,7 @@ def build_poster_pdf(output: Path) -> None:
         _card(
             pdf,
             60 + index * (fit_width + 14),
-            height - 797,
+            height - 766,
             fit_width,
             155,
             title,

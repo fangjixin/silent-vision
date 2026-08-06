@@ -321,11 +321,15 @@ def _smoke_env(tmp_path: Path, prediction: dict[str, object]) -> tuple[dict[str,
     return env, log_path
 
 
-def test_rocm_smoke_runs_phrase_tests_and_a_checkpoint_backed_prediction(tmp_path):
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_rocm_smoke_runs_phrase_tests_and_a_checkpoint_backed_prediction(
+    tmp_path, language
+):
     env, log_path = _smoke_env(
         tmp_path,
         {"backend": "torch", "device": "cuda:0", "thresholdSource": "checkpoint"},
     )
+    env["COMMAND_SMOKE_LANGUAGE"] = language
 
     result = _run("scripts/smoke_rocm.sh", env)
 
@@ -344,7 +348,7 @@ def test_rocm_smoke_runs_phrase_tests_and_a_checkpoint_backed_prediction(tmp_pat
     )
     assert "--checkpoint" in inference_call["args"]
     assert "--mouth-roi" in inference_call["args"]
-    assert inference_call["args"][-2:] == ["--language", "zh"]
+    assert inference_call["args"][-2:] == ["--language", language]
 
 
 @pytest.mark.parametrize("language", [None, "", "fr"])

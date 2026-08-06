@@ -83,6 +83,8 @@ def test_bundle_carries_the_bilingual_language_routing_copy(tmp_path):
             Path("submission/pull-request-description.md"),
         ]
     ).lower()
+    assert "你好，请帮我打开灯" in public_copy
+    assert "你吃饭了吗？" in public_copy
     assert "hello, please turn on the light." in public_copy
     assert "have you eaten?" in public_copy
     assert "user selects the language" in public_copy

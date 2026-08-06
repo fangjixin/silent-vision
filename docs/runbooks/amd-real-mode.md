@@ -70,8 +70,9 @@ unrelated clips with source intent `UNKNOWN`.
 ```
 
 The official command requires 15 independent takes for each registered phrase
-and 15 unrelated clips. Append `--allow-small-dataset` only for an execution
-smoke; that inventory is marked non-evidentiary.
+and 15 unrelated clips spanning both zh and en. Append
+`--allow-small-dataset` only for an execution smoke; that inventory is marked
+non-evidentiary.
 
 ## Train and Calibrate
 

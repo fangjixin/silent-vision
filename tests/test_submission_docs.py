@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+import pdfplumber
 import pytest
 from PIL import Image
 from pypdf import PdfReader
@@ -37,6 +38,12 @@ def test_readme_references_existing_scripts():
     assert all(script.is_file() for script in scripts)
 
 
+def test_amd_runbook_requires_unrelated_clips_in_both_languages():
+    text = (ROOT / "docs/runbooks/amd-real-mode.md").read_text(encoding="utf-8")
+
+    assert "15 unrelated clips spanning both zh and en" in text
+
+
 def test_submission_copy_avoids_unverified_marketing_claims():
     paths = [
         ROOT / "README.md",
@@ -67,6 +74,8 @@ def test_public_copy_describes_the_four_phrase_bilingual_catalog():
     ]
     combined = "\n".join(path.read_text(encoding="utf-8").lower() for path in paths)
 
+    assert "你好，请帮我打开灯" in combined
+    assert "你吃饭了吗？" in combined
     assert "hello, please turn on the light." in combined
     assert "have you eaten?" in combined
     assert "four-phrase bilingual catalog" in combined
@@ -126,11 +135,34 @@ def test_profile_and_poster_assets_describe_bilingual_language_routing():
     )
 
     for text in (source_text, asset_text):
+        assert "你好，请帮我打开灯" in text
+        assert "你吃饭了吗？" in text
         assert "Hello, please turn on the light." in text
         assert "Have you eaten?" in text
         assert "user selects the language" in text.lower()
         assert "selected-language softmax" in text.lower()
         assert "no bilingual accuracy" in text.lower()
+
+
+def test_poster_fit_cards_do_not_overlap_the_safety_panel():
+    """Fails when the Where-it-fits cards intrude into the safety panel."""
+    with pdfplumber.open(ROOT / "submission/Silent-Vision-Poster.pdf") as pdf:
+        page = pdf.pages[0]
+        fit_cards = [
+            curve
+            for curve in page.curves
+            if curve["height"] == pytest.approx(155, abs=0.01)
+            and curve["width"] == pytest.approx((page.width - 148) / 3, abs=0.01)
+        ]
+        safety_panel = next(
+            curve
+            for curve in page.curves
+            if curve["height"] == pytest.approx(92, abs=0.01)
+            and curve["width"] == pytest.approx(page.width - 120, abs=0.01)
+        )
+
+    assert len(fit_cards) == 3
+    assert safety_panel["y1"] <= min(card["y0"] for card in fit_cards)
 
 
 def test_poster_png_is_a_full_size_a3_render():
