@@ -556,3 +556,53 @@ def test_unknown_calibration_retains_free_form_phrase_and_language(
     assert metadata["phrase"] == "What time is it?"
     assert metadata["language"] == "en"
     assert metadata["intent"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
+    "start_request,started_type",
+    [
+        (
+            {"type": "clip.start", "profileId": "global", "language": "en"},
+            "clip.started",
+        ),
+        (
+            {
+                "type": "calibration.start",
+                "profileId": "global",
+                "language": "en",
+                "phraseId": "en_chat_meal",
+            },
+            "calibration.started",
+        ),
+    ],
+)
+def test_stream_restart_does_not_reuse_stale_typed_request(
+    tmp_path, monkeypatch, start_request, started_type
+):
+    decode_calls = 0
+
+    def fail_if_decoded(data, target_fps):
+        nonlocal decode_calls
+        decode_calls += 1
+        raise AssertionError("stream restart requires a fresh typed request")
+
+    monkeypatch.setattr("api.websocket.decode_video_clip", fail_if_decoded)
+    app = create_app(Settings(command_backend="fake", persistence_root=tmp_path))
+    client = TestClient(app)
+    session_id = client.post("/api/sessions").json()["sessionId"]
+
+    with client.websocket_connect(
+        f"/ws/{session_id}", headers={"origin": "http://localhost:8000"}
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json(start_request)
+        assert websocket.receive_json()["type"] == started_type
+        websocket.send_json({"type": "stream.stop"})
+        assert websocket.receive_json()["type"] == "stream.stopped"
+        websocket.send_json({"type": "stream.start"})
+        assert websocket.receive_json()["type"] == "stream.started"
+        websocket.send_bytes(b"must-be-ignored")
+        websocket.send_json({"type": "ping"})
+        assert websocket.receive_json()["type"] == "pong"
+
+    assert decode_calls == 0

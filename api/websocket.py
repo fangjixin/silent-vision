@@ -402,6 +402,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     pending_clip_metadata: dict[str, object] = {}
     pending_clip_language: str | None = None
 
+    def clear_pending_request() -> None:
+        nonlocal pending_calibration, pending_clip_metadata, pending_clip_language
+        pending_calibration = None
+        pending_clip_metadata = {}
+        pending_clip_language = None
+
     try:
         while True:
             message = await websocket.receive()
@@ -419,11 +425,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 )
                 if command_type == "stream.start":
                     await cancel_active_inference("stream restarted")
+                    clear_pending_request()
                     active.reset_stream()
                     logger.info("stream started session_id=%s", session_id)
                     await send_json(_event("stream.started", session_id))
                 elif command_type == "stream.stop":
                     await cancel_active_inference("stream stopped")
+                    clear_pending_request()
                     active.stop_stream()
                     logger.info("stream stopped session_id=%s", session_id)
                     await send_json(_event("stream.stopped", session_id))
@@ -437,9 +445,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     try:
                         request = ClipStartRequest.model_validate(command_payload)
                     except ValueError as exc:
-                        pending_calibration = None
-                        pending_clip_metadata = {}
-                        pending_clip_language = None
+                        clear_pending_request()
                         active.stop_stream()
                         logger.warning(
                             "clip request rejected session_id=%s reason=%s",
@@ -455,7 +461,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                         continue
                     await cancel_active_inference("clip started")
                     active.reset_stream()
-                    pending_calibration = None
+                    clear_pending_request()
                     pending_clip_metadata = {"profileId": "global"}
                     pending_clip_language = request.language
                     logger.info(
@@ -473,9 +479,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 elif command_type == "clip.cancel":
                     await cancel_active_inference("clip cancelled")
                     active.stop_stream()
-                    pending_calibration = None
-                    pending_clip_metadata = {}
-                    pending_clip_language = None
+                    clear_pending_request()
                     logger.info("clip cancelled session_id=%s", session_id)
                     await send_json(_event("stream.stopped", session_id))
                 elif command_type == "calibration.start":
@@ -483,13 +487,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                         request = CalibrationRequest.model_validate(command_payload)
                         if not settings.allow_global_profile_write:
                             raise ValueError("global profile writes are disabled")
-                        pending_calibration = _resolve_calibration(
+                        calibration = _resolve_calibration(
                             request, websocket.app.state.phrase_catalog
                         ) | {"profileId": "global", "scope": "global"}
                         await cancel_active_inference("calibration started")
                         active.reset_stream()
-                        pending_clip_metadata = {}
-                        pending_clip_language = None
+                        clear_pending_request()
+                        pending_calibration = calibration
                         logger.info(
                             "calibration started session_id=%s profile_id=%s scope=%s phrase_id=%s intent=%s",
                             session_id,
@@ -510,9 +514,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                             )
                         )
                     except ValueError as exc:
-                        pending_calibration = None
-                        pending_clip_metadata = {}
-                        pending_clip_language = None
+                        clear_pending_request()
                         active.stop_stream()
                         logger.warning(
                             "calibration request rejected session_id=%s reason=%s",
@@ -556,6 +558,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             active.active_inference_task is not None,
         )
         await cancel_active_inference("websocket cleanup")
+        clear_pending_request()
         active.stop_stream()
         websocket.app.state.session_manager.disconnect(session_id)
         _cleanup_temp(session_id)
