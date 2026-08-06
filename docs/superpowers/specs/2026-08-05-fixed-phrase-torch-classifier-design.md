@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-05
 **Application:** Silent Vision
-**Status:** Proposed for implementation
+**Status:** Implemented through the non-evidentiary ROCm pipeline; bilingual
+catalog and language routing approved for completion on 2026-08-06
 
 ## 1. Objective
 
@@ -62,12 +63,14 @@ The repository contains one versioned JSON catalog. Each enabled entry has:
 user. `intent` remains the safe routing label consumed by the current agent and
 action boundary.
 
-The initial catalog contains the two phrases already recorded on Radeon:
+The initial bilingual catalog contains two paired Chinese and English phrases:
 
 | phraseId | text | language | intent |
 | --- | --- | --- | --- |
 | `zh_light_on_hello` | `你好，请帮我打开灯` | `zh` | `LIGHT_ON` |
 | `zh_chat_meal` | `你吃饭了吗？` | `zh` | `CHAT_OTHER` |
+| `en_light_on_hello` | `Hello, please turn on the light.` | `en` | `LIGHT_ON` |
+| `en_chat_meal` | `Have you eaten?` | `en` | `CHAT_OTHER` |
 
 Additional phrases are added by extending the catalog and recording examples;
 adding a phrase does not require a new enum or inference code branch as long as
@@ -81,6 +84,27 @@ Normalization is used only to match saved metadata to the catalog. Runtime outpu
 always uses the exact catalog `text`.
 
 `UNKNOWN` is not a phrase class. It is a rejection result.
+
+### Language selection and catalog-driven recording
+
+The user selects `zh` or `en` before recognition. The selected language is sent
+with `clip.start`, validated by the server, and passed to the classifier as
+trusted session input. It is never inferred from the user's face or identity.
+
+One four-class Torch model is trained for the complete catalog. At inference,
+only logits whose catalog entries match the selected language participate in
+the softmax, top-K list, top-1 decision, margin, and probability rejection. The
+same language mask is applied during threshold calibration and final evaluation
+using each manifest row's `language`. This keeps the runtime and evidence
+probabilities comparable. A missing or unsupported recognition language fails
+closed before classification rather than silently evaluating all languages.
+
+The recording UI is also catalog-driven. The user selects a language and then
+one of that language's registered phrases; the phrase's intent is supplied by
+the catalog and is not manually chosen. `UNKNOWN` remains an explicit recording
+choice for unrelated phrases and requires the recorder to select the language
+they intend to mouth. This prevents phrase, language, and intent metadata from
+contradicting one another.
 
 ## 4. Dataset and Provenance
 
@@ -130,7 +154,10 @@ threshold calibration and 10 for final evaluation. Training may expose an
 are marked non-evidentiary and cannot be cited as accuracy or rejection results.
 
 Unrelated clips have expected label `UNKNOWN` only in calibration and evaluation
-data. They are not added as a learned phrase class.
+data. They are not added as a learned phrase class. Each unrelated clip must be
+recorded with `language: zh` or `language: en`, both languages must be represented
+in the official unrelated set, and the selected language controls its candidate
+mask during calibration and evaluation.
 
 ## 5. Model and Training
 
@@ -167,6 +194,8 @@ never augmented.
 
 The classifier outputs logits over phrase IDs. It does not output intent logits
 or generate text. Intent and display text come from the catalog after acceptance.
+Language-masked softmax is a shared implementation used by training calibration,
+evaluation, and runtime inference; it never changes the checkpoint head order.
 
 ### ROCm requirement
 
@@ -193,7 +222,7 @@ centroid per phrase. An accepted phrase must satisfy both a minimum top-1
 probability and a maximum cosine distance from the predicted phrase's centroid.
 Otherwise the decision is `UNKNOWN`, carries no phrase text, and cannot execute
 an action. Top-1/top-2 margin remains debug output but is not an independent
-acceptance gate for the initial two-class catalog.
+acceptance gate for the language-filtered two-candidate decision.
 
 Probability and per-class distance thresholds are selected using only the known
 and unrelated calibration partitions. They are frozen before the final evaluation
@@ -260,7 +289,8 @@ Top-K debug output is phrase-oriented and includes phrase ID, exact text, mapped
 intent, and confidence. The public `intent` field remains compatible with the
 existing agent policy. `CHAT_OTHER` may display its registered phrase but never
 executes an action. Rejected output has `intent: UNKNOWN`, no matched phrase, and
-no executable route.
+no executable route. Runtime metadata records the user-selected language and the
+candidate phrase IDs that were eligible for the decision.
 
 ## 8. Scripts and Artifacts
 
@@ -298,6 +328,10 @@ ROCm execution. They cover:
 - threshold-calibration and final-evaluation partition separation;
 - checkpoint threshold defaults and logged override precedence;
 - phrase-oriented top-K output;
+- required `zh`/`en` selection at recognition start and rejection of missing or
+  unsupported values;
+- language-masked probability, top-K, calibration, and evaluation behavior;
+- catalog-driven recording choices with intent derived from the phrase;
 - WebSocket output from a synthetic Torch checkpoint; and
 - validation-report schema.
 
@@ -325,8 +359,9 @@ ROCm device evidence, and untouched final-evaluation output.
 
 The feature is complete only when all of the following are true:
 
-1. The catalog and manifest builder represent each registered phrase as its own
-   class and report the existing incorrect source intent without rewriting data.
+1. The catalog and manifest builder represent all four registered Chinese and
+   English phrases as separate classes and report the existing incorrect source
+   intent without rewriting data.
 2. Training on Radeon creates a versioned `.pt` whose head size equals the phrase
    count.
 3. Torch inference returns the registered original sentence and mapped intent.
@@ -335,3 +370,6 @@ The feature is complete only when all of the following are true:
 5. Training and inference share the same feature implementation and configuration.
 6. Automated tests pass locally and ROCm evidence is saved remotely.
 7. Submission documents describe only measured behavior and actual dependencies.
+8. Recognition requires an explicit language, considers only that language's
+   registered phrases, and uses the same masking rule in calibration, evaluation,
+   and WebSocket runtime inference.
