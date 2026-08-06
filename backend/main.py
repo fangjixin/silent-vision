@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent.agent import AgentPolicy
+from api.phrases import router as phrase_router
 from api.session import router as session_router
 from api.websocket import router as websocket_router
 from backend.config import Settings, get_settings
@@ -34,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.face_detector = create_face_detector(app_settings)
     app.state.models["ready"] = True
+    app.include_router(phrase_router)
     app.include_router(session_router)
     app.include_router(websocket_router)
     frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
