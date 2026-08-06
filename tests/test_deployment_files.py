@@ -309,6 +309,7 @@ def _smoke_env(tmp_path: Path, prediction: dict[str, object]) -> tuple[dict[str,
         {
             "COMMAND_CLASSIFIER_CHECKPOINT": str(checkpoint),
             "COMMAND_SMOKE_SAMPLE": str(sample),
+            "COMMAND_SMOKE_LANGUAGE": "zh",
             "PYTHON_BIN": str(_make_smoke_dispatch_python(tmp_path)),
             "REAL_PYTHON": sys.executable,
             "PYTHONPATH": os.pathsep.join(
@@ -343,6 +344,24 @@ def test_rocm_smoke_runs_phrase_tests_and_a_checkpoint_backed_prediction(tmp_pat
     )
     assert "--checkpoint" in inference_call["args"]
     assert "--mouth-roi" in inference_call["args"]
+    assert inference_call["args"][-2:] == ["--language", "zh"]
+
+
+@pytest.mark.parametrize("language", [None, "", "fr"])
+def test_rocm_smoke_requires_a_supported_explicit_language(tmp_path, language):
+    env, _ = _smoke_env(
+        tmp_path,
+        {"backend": "torch", "device": "cuda:0", "thresholdSource": "checkpoint"},
+    )
+    if language is None:
+        env.pop("COMMAND_SMOKE_LANGUAGE")
+    else:
+        env["COMMAND_SMOKE_LANGUAGE"] = language
+
+    result = _run("scripts/smoke_rocm.sh", env)
+
+    assert result.returncode != 0
+    assert "COMMAND_SMOKE_LANGUAGE must be zh or en" in result.stderr
 
 
 def test_rocm_smoke_fails_if_prediction_is_not_on_torch_cuda_zero(tmp_path):

@@ -131,9 +131,10 @@ bash scripts/amd_real_oneclick.sh
 ```
 
 Open the emitted local or tunnel URL. In the Calibration panel, save independent
-takes under `profileId=global` and enter the exact catalog phrase. Use the mapped
-intent shown in the table above. Save unrelated clips with source intent
-`UNKNOWN`; they are used only for rejection calibration and final evaluation.
+takes under `profileId=global` by selecting the registered catalog phrase; the
+catalog supplies its exact text, language, and mapped intent. Free-form text is
+only for unrelated clips with source intent `UNKNOWN`, which are used only for
+rejection calibration and final evaluation.
 
 Official evidence requires 15 independent takes for each of the four phrases
 (10 training, 2 threshold-calibration, and 3 final-evaluation clips), plus at
@@ -219,7 +220,8 @@ Run one checkpoint-backed mouth-ROI clip with:
 ```bash
 /opt/venv/bin/python scripts/infer_command_clip.py \
   --checkpoint /workspace/persistent/silent-vision/models/fixed-phrase.pt \
-  --mouth-roi /absolute/path/to/mouth_roi.npy
+  --mouth-roi /absolute/path/to/mouth_roi.npy \
+  --language zh
 ```
 
 ## 5. Start the Official Radeon Demo
@@ -251,6 +253,7 @@ For a checkpoint-backed ROCm smoke, provide one real mouth-ROI sample:
 ```bash
 export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/fixed-phrase.pt
 export COMMAND_SMOKE_SAMPLE=/absolute/path/to/mouth_roi.npy
+export COMMAND_SMOKE_LANGUAGE=zh
 bash scripts/smoke_rocm.sh
 ```
 

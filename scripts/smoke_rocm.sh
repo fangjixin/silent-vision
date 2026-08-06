@@ -20,6 +20,10 @@ if [[ -z "${COMMAND_SMOKE_SAMPLE:-}" || ! -s "$COMMAND_SMOKE_SAMPLE" ]]; then
   echo "Mouth ROI smoke sample not found: ${COMMAND_SMOKE_SAMPLE:-<unset>}" >&2
   exit 1
 fi
+if [[ "${COMMAND_SMOKE_LANGUAGE:-}" != "zh" && "${COMMAND_SMOKE_LANGUAGE:-}" != "en" ]]; then
+  echo "COMMAND_SMOKE_LANGUAGE must be zh or en" >&2
+  exit 1
+fi
 
 "$PYTHON_BIN" - <<'PY'
 import torch
@@ -54,6 +58,7 @@ trap cleanup EXIT
 "$PYTHON_BIN" scripts/infer_command_clip.py \
   --checkpoint "$COMMAND_CLASSIFIER_CHECKPOINT" \
   --mouth-roi "$COMMAND_SMOKE_SAMPLE" \
+  --language "$COMMAND_SMOKE_LANGUAGE" \
   | tee "$prediction_output"
 
 SMOKE_PREDICTION_OUTPUT="$prediction_output" "$PYTHON_BIN" - <<'PY'

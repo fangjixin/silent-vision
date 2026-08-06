@@ -55,8 +55,9 @@ bash scripts/amd_real_oneclick.sh
 ```
 
 The launcher prints `Recording mode` before startup. Save independent takes to
-the global profile. Enter the exact registered phrase and its mapped intent;
-save unrelated clips with source intent `UNKNOWN`.
+the global profile by selecting the registered catalog phrase; the catalog
+supplies the exact text, language, and mapped intent. Use free-form text only for
+unrelated clips with source intent `UNKNOWN`.
 
 ## Build the Dataset Partitions
 
@@ -113,12 +114,14 @@ denominators, hashes, threshold provenance, backend, and device.
 ```bash
 /opt/venv/bin/python scripts/infer_command_clip.py \
   --checkpoint /workspace/persistent/silent-vision/models/fixed-phrase.pt \
-  --mouth-roi /absolute/path/to/mouth_roi.npy
+  --mouth-roi /absolute/path/to/mouth_roi.npy \
+  --language zh
 ```
 
 ```bash
 export COMMAND_CLASSIFIER_CHECKPOINT=/workspace/persistent/silent-vision/models/fixed-phrase.pt
 export COMMAND_SMOKE_SAMPLE=/absolute/path/to/mouth_roi.npy
+export COMMAND_SMOKE_LANGUAGE=zh
 bash scripts/smoke_rocm.sh
 ```
 

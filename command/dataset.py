@@ -79,6 +79,13 @@ def split_unknown(samples: list[ManifestSample], allow_small: bool):
     return samples[:5], samples[5:]
 
 
+def _unknown_counts_by_language(samples: list[ManifestSample]) -> dict[str, int]:
+    return {
+        language: sum(sample.language == language for sample in samples)
+        for language in ("zh", "en")
+    }
+
+
 def _manifest_sample(
     sample_dir: Path,
     metadata_path: Path,
@@ -154,7 +161,7 @@ def build_dataset_manifests(
             )
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         if not isinstance(metadata, dict):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004
                 f"recording metadata must be an object: {metadata_path.resolve()}"
             )
         sample_id = str(metadata.get("sampleId") or sample_dir.name)
@@ -205,13 +212,17 @@ def build_dataset_manifests(
     train: list[ManifestSample] = []
     calibration_known: list[ManifestSample] = []
     evaluation_known: list[ManifestSample] = []
-    for phrase_id in known_by_phrase:
+    for phrase_samples in known_by_phrase.values():
         phrase_train, phrase_calibration, phrase_evaluation = split_known(
-            _sort_samples(known_by_phrase[phrase_id], seed), allow_small_dataset
+            _sort_samples(phrase_samples, seed), allow_small_dataset
         )
         train.extend(phrase_train)
         calibration_known.extend(phrase_calibration)
         evaluation_known.extend(phrase_evaluation)
+
+    unknown_by_language = _unknown_counts_by_language(unknown)
+    if not allow_small_dataset and not all(unknown_by_language.values()):
+        raise ValueError("official evidence requires 15 unrelated clips in both zh and en")
 
     calibration_unknown, evaluation_unknown = split_unknown(
         _sort_samples(unknown, seed), allow_small_dataset
@@ -235,6 +246,7 @@ def build_dataset_manifests(
         "counts": {
             "known": sum(len(samples) for samples in known_by_phrase.values()),
             "unknown": len(unknown),
+            "unknownByLanguage": unknown_by_language,
             "excluded": len(exclusions),
             "byPhrase": {
                 phrase_id: len(samples)

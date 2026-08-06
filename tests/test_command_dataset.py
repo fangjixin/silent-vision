@@ -9,20 +9,46 @@ import pytest
 from command.dataset import build_dataset_manifests
 
 
-def save_sample(root: Path, sample_id: str, phrase: str, intent: str, value: int):
+def save_sample(
+    root: Path,
+    sample_id: str,
+    phrase: str,
+    intent: str,
+    value: int,
+    language: str = "zh",
+):
     sample = root / "global" / intent / sample_id
     sample.mkdir(parents=True)
     metadata = {
         "sampleId": sample_id,
         "phrase": phrase,
         "intent": intent,
-        "language": "zh",
+        "language": language,
     }
     (sample / "metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False), encoding="utf-8"
     )
     np.save(sample / "mouth_roi.npy", np.full((8, 96, 96), value, dtype=np.uint8))
     return sample / "metadata.json"
+
+
+def save_official_known_samples(root: Path) -> None:
+    phrases = [
+        ("zh_light_on_hello", "你好，请帮我打开灯", "LIGHT_ON", "zh"),
+        ("zh_chat_meal", "你吃饭了吗？", "CHAT_OTHER", "zh"),
+        ("en_light_on_hello", "Hello, please turn on the light.", "LIGHT_ON", "en"),
+        ("en_chat_meal", "Have you eaten?", "CHAT_OTHER", "en"),
+    ]
+    for phrase_offset, (phrase_id, phrase, intent, language) in enumerate(phrases):
+        for take in range(15):
+            save_sample(
+                root,
+                f"{phrase_id}-{take}",
+                phrase,
+                intent,
+                phrase_offset * 100 + take,
+                language,
+            )
 
 
 def test_catalog_corrects_source_intent_without_mutating_metadata(tmp_path):
@@ -104,6 +130,55 @@ def test_official_gate_rejects_too_few_samples(tmp_path):
         )
 
 
+def test_official_gate_rejects_unknown_clips_from_only_one_language(tmp_path):
+    save_official_known_samples(tmp_path)
+    for take in range(15):
+        save_sample(
+            tmp_path,
+            f"unknown-zh-{take}",
+            "今天天气不错",
+            "UNKNOWN",
+            20 + take,
+            "zh",
+        )
+
+    with pytest.raises(ValueError, match="unrelated clips in both zh and en"):
+        build_dataset_manifests(
+            tmp_path, Path("command/phrase_catalog.json"), tmp_path / "out", False, 17
+        )
+
+
+def test_official_gate_accepts_bilingual_unknown_clips_and_reports_language_counts(
+    tmp_path,
+):
+    save_official_known_samples(tmp_path)
+    for take in range(8):
+        save_sample(
+            tmp_path,
+            f"unknown-zh-{take}",
+            "今天天气不错",
+            "UNKNOWN",
+            20 + take,
+            "zh",
+        )
+    for take in range(7):
+        save_sample(
+            tmp_path,
+            f"unknown-en-{take}",
+            "What time is it?",
+            "UNKNOWN",
+            60 + take,
+            "en",
+        )
+
+    inventory = build_dataset_manifests(
+        tmp_path, Path("command/phrase_catalog.json"), tmp_path / "out", False, 17
+    )
+
+    assert inventory["evidentiary"] is True
+    assert inventory["counts"]["unknownByLanguage"] == {"zh": 8, "en": 7}
+
+
 def test_explicit_unknown_is_not_a_training_class(tmp_path):
     save_sample(tmp_path, "u", "今天天气不错", "UNKNOWN", 3)
     build_dataset_manifests(
@@ -162,6 +237,7 @@ def test_inventory_includes_per_phrase_counts_and_split_membership(tmp_path):
         "en_light_on_hello": 0,
         "en_chat_meal": 0,
     }
+    assert inventory["counts"]["unknownByLanguage"] == {"zh": 0, "en": 0}
     membership = inventory["splitMembership"]
     recorded_ids = set().union(*map(set, membership.values()))
     assert recorded_ids == {"light-0", "light-1", "light-2"}

@@ -1,6 +1,6 @@
+import warnings
 from dataclasses import dataclass
 from typing import Protocol
-import warnings
 
 import numpy as np
 

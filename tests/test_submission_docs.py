@@ -110,6 +110,29 @@ def test_profile_and_poster_pdf_structure():
     assert float(poster_box.height) == pytest.approx(1190.55, abs=0.01)
 
 
+def test_profile_and_poster_assets_describe_bilingual_language_routing():
+    reviewed_sources = [
+        ROOT / "docs/submission/project-profile-source.md",
+        ROOT / "docs/submission/poster-copy.md",
+    ]
+    generated_assets = [
+        ROOT / "submission/Silent-Vision-Project-Profile.pdf",
+        ROOT / "submission/Silent-Vision-Poster.pdf",
+    ]
+    source_text = "\n".join(path.read_text(encoding="utf-8") for path in reviewed_sources)
+    asset_text = "\n".join(
+        "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+        for path in generated_assets
+    )
+
+    for text in (source_text, asset_text):
+        assert "Hello, please turn on the light." in text
+        assert "Have you eaten?" in text
+        assert "user selects the language" in text.lower()
+        assert "selected-language softmax" in text.lower()
+        assert "no bilingual accuracy" in text.lower()
+
+
 def test_poster_png_is_a_full_size_a3_render():
     with Image.open(ROOT / "submission/Silent-Vision-Poster.png") as poster:
         width, height = poster.size

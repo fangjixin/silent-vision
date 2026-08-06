@@ -59,7 +59,7 @@ def validate_phrase_checkpoint_schema(
     payload: dict[str, Any],
 ) -> ValidatedPhraseCheckpointSchema:
     if not isinstance(payload, dict):
-        raise ValueError("checkpoint payload must be a dictionary")
+        raise ValueError("checkpoint payload must be a dictionary")  # noqa: TRY004
     missing = sorted(REQUIRED_KEYS - payload.keys())
     if missing:
         raise ValueError(f"checkpoint missing required keys: {', '.join(missing)}")
@@ -67,7 +67,7 @@ def validate_phrase_checkpoint_schema(
         raise ValueError(f"unsupported checkpoint schema: {payload['schemaVersion']!r}")
     _validate_decision_policy(payload["decisionPolicy"])
     if not isinstance(payload["modelState"], Mapping):
-        raise ValueError("modelState must be a mapping")
+        raise ValueError("modelState must be a mapping")  # noqa: TRY004
 
     phrase_ids_value = payload["phraseIds"]
     if not isinstance(phrase_ids_value, (list, tuple)) or not phrase_ids_value:
@@ -83,7 +83,7 @@ def validate_phrase_checkpoint_schema(
 
     catalog_records = payload["phraseCatalog"]
     if not isinstance(catalog_records, list):
-        raise ValueError("phraseCatalog must be a list")
+        raise ValueError("phraseCatalog must be a list")  # noqa: TRY004
     if any(
         record.get("enabled", True) and record.get("intent") == "UNKNOWN"
         for record in catalog_records
@@ -201,7 +201,7 @@ def load_phrase_checkpoint(path: Path, device: str) -> LoadedPhraseCheckpoint:
             "legacy intent-only checkpoint; retrain with the fixed phrase classifier"
         )
     if not isinstance(payload, dict):
-        raise ValueError("checkpoint payload must be a dictionary")
+        raise ValueError("checkpoint payload must be a dictionary")  # noqa: TRY004
 
     _validate_head_from_unvalidated_payload(payload)
     validated = validate_phrase_checkpoint_schema(payload)
@@ -275,7 +275,7 @@ def _build_validated_model(
 
 def _mapping(value: Any, name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise ValueError(f"{name} must be a mapping")
+        raise ValueError(f"{name} must be a mapping")  # noqa: TRY004
     return value
 
 
@@ -307,7 +307,7 @@ def _positive_integer(value: Any, name: str) -> int:
 
 def _finite_number(value: Any, name: str) -> float:
     if not isinstance(value, Real) or isinstance(value, bool):
-        raise ValueError(f"{name} must be numeric and finite")
+        raise ValueError(f"{name} must be numeric and finite")  # noqa: TRY004
     number = float(value)
     if not math.isfinite(number):
         raise ValueError(f"{name} must be finite")

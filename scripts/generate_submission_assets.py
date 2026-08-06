@@ -30,13 +30,15 @@ SUBMISSION = ROOT / "submission"
 PDF_OUTPUT = ROOT / "output/pdf"
 REPOSITORY_URL = "https://github.com/fangjixin/silent-vision"
 PROFILE_EVIDENCE_STATUS = (
-    "Pending: the official Radeon training run, final evaluation report, and "
-    "recorded demonstration. Small-data smoke artifacts are non-evidentiary, "
-    "and no accuracy or latency figure is published."
+    "Pending: English recordings, bilingual training, the official Radeon run, "
+    "final evaluation report, and recorded demonstration. No bilingual accuracy "
+    "claim is made before that final report. Small-data smoke artifacts are "
+    "non-evidentiary."
 )
 POSTER_EVIDENCE_STATUS = (
-    "ROCm execution and final evaluation remain to be recorded. Small-data "
-    "smoke proves pipeline execution only."
+    "Pending: English recordings, bilingual training, ROCm execution, and final "
+    "evaluation. No bilingual accuracy claim before the final report. Small-data "
+    "smoke proves execution only."
 )
 
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
@@ -56,8 +58,29 @@ def _read_reviewed_copy() -> tuple[str, str]:
     profile = PROFILE_SOURCE.read_text(encoding="utf-8")
     poster = POSTER_SOURCE.read_text(encoding="utf-8")
     required = {
-        "profile": (profile, ["Applicant: Jixin Fang", REPOSITORY_URL, PROFILE_EVIDENCE_STATUS]),
-        "poster": (poster, [REPOSITORY_URL, POSTER_EVIDENCE_STATUS]),
+        "profile": (
+            profile,
+            [
+                "Applicant: Jixin Fang",
+                REPOSITORY_URL,
+                "Hello, please turn on the light.",
+                "Have you eaten?",
+                "user selects the language",
+                "selected-language softmax",
+                "No bilingual accuracy",
+            ],
+        ),
+        "poster": (
+            poster,
+            [
+                REPOSITORY_URL,
+                "Hello, please turn on the light.",
+                "Have you eaten?",
+                "user selects the language",
+                "selected-language softmax",
+                "No bilingual accuracy",
+            ],
+        ),
     }
     missing = [
         f"{document}: {phrase}"
@@ -217,34 +240,38 @@ def _profile_page_one(pdf: canvas.Canvas) -> None:
         leading=16,
     )
     card_width = (width - 96) / 2
-    _card(
-        pdf,
-        42,
-        355,
-        card_width,
-        126,
-        "zh_light_on_hello",
-        "你好，请帮我打开灯  ->  LIGHT_ON",
-        body_font=CJK_FONT,
-        body_size=10.3,
-    )
-    _card(
-        pdf,
-        54 + card_width,
-        355,
-        card_width,
-        126,
-        "zh_chat_meal",
-        "你吃饭了吗？  ->  CHAT_OTHER",
-        body_font=CJK_FONT,
-        body_size=10.3,
-    )
+    catalog_cards = [
+        ("zh_light_on_hello", "你好，请帮我打开灯  ->  LIGHT_ON", CJK_FONT),
+        ("zh_chat_meal", "你吃饭了吗？  ->  CHAT_OTHER", CJK_FONT),
+        ("en_light_on_hello", "Hello, please turn on the light.  ->  LIGHT_ON", "Helvetica"),
+        ("en_chat_meal", "Have you eaten?  ->  CHAT_OTHER", "Helvetica"),
+    ]
+    positions = [
+        (42, 423),
+        (54 + card_width, 423),
+        (42, 347),
+        (54 + card_width, 347),
+    ]
+    for (phrase_id, phrase, font), (x, y) in zip(catalog_cards, positions):
+        _card(
+            pdf,
+            x,
+            y,
+            card_width,
+            62,
+            phrase_id,
+            phrase,
+            title_size=8.2,
+            body_font=font,
+            body_size=8.1,
+            leading=10,
+        )
     pdf.setFillColor(CHARCOAL)
     pdf.roundRect(42, 196, width - 84, 126, 10, fill=1, stroke=0)
     _label(pdf, "Current status", 60, 294, RADEON_RED)
     _paragraph(
         pdf,
-        "CPU code decodes the video, detects and aligns one face, and crops the mouth. The fixed-phrase Torch model is designed to train and run on AMD Radeon through ROCm. The repository returns decisions; it does not operate an external tool or device.",
+        "The user selects the language before recording; the service does not infer it. Selected-language softmax then scores only the enabled phrases for that language. CPU code prepares the mouth clip, and the fixed-phrase Torch model runs on AMD Radeon through ROCm.",
         60,
         268,
         width - 120,
@@ -257,7 +284,7 @@ def _profile_page_one(pdf: canvas.Canvas) -> None:
     _label(pdf, "Pending", 58, 144)
     _paragraph(
         pdf,
-        "Official Radeon training, untouched final evaluation, and recorded demonstration.",
+        "English recordings, bilingual training, final evaluation, and the recorded demo remain pending. No bilingual accuracy claim yet.",
         58,
         122,
         width - 116,
@@ -318,9 +345,9 @@ def _profile_page_three(pdf: canvas.Canvas) -> None:
     )
     width, _ = A4
     steps = [
-        ("01", "Capture", "Record one 2-5 second WebM clip with audio disabled."),
+        ("01", "Capture", "User selects zh or en, then records one 2-5 second WebM clip with audio disabled."),
         ("02", "Preprocess", "Decode, detect one face, align, and crop the mouth on CPU."),
-        ("03", "Classify", "Run phrase logits and a normalized embedding on Radeon."),
+        ("03", "Classify", "Run selected-language softmax, phrase logits, and a normalized embedding on Radeon."),
         ("04", "Gate", "Require checkpoint probability and phrase-centroid distance."),
         ("05", "Route", "Return exact catalog text or reject the clip as UNKNOWN."),
     ]
@@ -344,7 +371,7 @@ def _profile_page_three(pdf: canvas.Canvas) -> None:
     _label(pdf, "Safety rule", 58, 150)
     _paragraph(
         pdf,
-        "Both calibrated gates must pass. Rejected output carries no matched phrase text and cannot execute. Top-1 margin is diagnostic only.",
+        "Both calibrated gates must pass. Heuristic UNKNOWN carries no matched phrase text and cannot execute. Top-1 margin is diagnostic only.",
         58,
         128,
         width - 116,
@@ -403,7 +430,7 @@ def _profile_page_four(pdf: canvas.Canvas) -> None:
     _label(pdf, "Shared decision boundary", 108, 185)
     _paragraph(
         pdf,
-        "Probability + predicted phrase centroid distance, then exact catalog text or UNKNOWN.",
+        "User-selected language + selected-language softmax, then probability and predicted phrase centroid distance for exact catalog text or UNKNOWN.",
         108,
         160,
         width - 216,
@@ -462,7 +489,7 @@ def _profile_page_five(pdf: canvas.Canvas) -> None:
         card_width,
         112,
         "Catalog boundary",
-        "UNKNOWN is not trained. Accepted exact text and mapped intent come from the checkpoint catalog; rejected output carries neither.",
+        "Selected-language softmax is applied before gating. UNKNOWN is not trained; accepted exact text and intent come from the checkpoint catalog.",
         body_size=8.7,
         leading=12,
     )
@@ -604,22 +631,34 @@ def build_poster_pdf(output: Path) -> None:
         leading=22,
         color=MUTED,
     )
-    _label(pdf, "Registered phrases", 60, height - 257)
+    _label(pdf, "Four-phrase bilingual catalog", 60, height - 257)
     pdf.setFillColor(CHARCOAL)
-    pdf.setFont(CJK_FONT, 14)
+    pdf.setFont(CJK_FONT, 13)
     pdf.drawString(60, height - 280, "你好，请帮我打开灯  |  你吃饭了吗？")
-    _label(pdf, "How it works", 60, height - 314)
+    pdf.setFont("Helvetica", 13)
+    pdf.drawString(60, height - 303, "Hello, please turn on the light.  |  Have you eaten?")
+    _paragraph(
+        pdf,
+        "The user selects the language before recording. Selected-language softmax scores only that language, then exact catalog text or heuristic UNKNOWN is returned.",
+        60,
+        height - 327,
+        width - 120,
+        size=10,
+        leading=14,
+        color=MUTED,
+    )
+    _label(pdf, "How it works", 60, height - 373)
     step_titles = ["Record", "CPU decode", "CPU crop", "Radeon", "Gate + route"]
     step_bodies = [
-        "2-5 second WebM; audio off",
+        "Select zh or en; 2-5 second WebM",
         "PyAV at 25 FPS",
         "Face, align, 96 x 96 mouth",
         "Fixed-phrase Torch model",
-        "Probability + centroid distance",
+        "Selected-language softmax + gates",
     ]
     gap = 14
     step_width = (width - 120 - gap * 4) / 5
-    y = height - 492
+    y = height - 551
     for index, (title, body) in enumerate(zip(step_titles, step_bodies)):
         x = 60 + index * (step_width + gap)
         _card(
@@ -636,7 +675,7 @@ def build_poster_pdf(output: Path) -> None:
         )
         if index < 4:
             _arrow(pdf, x + step_width + 3, y + 72, x + step_width + gap - 3, y + 72)
-    _label(pdf, "Where it fits", 60, height - 542)
+    _label(pdf, "Where it fits", 60, height - 601)
     fit_width = (width - 148) / 3
     fits = [
         ("Creator control input", "Another application can map an accepted intent to capture, cue, or editing actions."),
@@ -647,7 +686,7 @@ def build_poster_pdf(output: Path) -> None:
         _card(
             pdf,
             60 + index * (fit_width + 14),
-            height - 738,
+            height - 797,
             fit_width,
             155,
             title,
@@ -660,7 +699,7 @@ def build_poster_pdf(output: Path) -> None:
     _label(pdf, "Safety rule", 82, height - 810)
     _paragraph(
         pdf,
-        "Both calibrated gates must pass. Rejected clips cannot execute.",
+        "Both calibrated gates must pass. Heuristic UNKNOWN carries no exact phrase text and cannot execute.",
         82,
         height - 842,
         width - 164,

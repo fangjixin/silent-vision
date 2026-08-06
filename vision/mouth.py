@@ -37,10 +37,10 @@ def crop_mouth(image_rgb: np.ndarray, landmarks: list[tuple[float, float]], mout
     max_y = min(1.0, center_y + crop_height / 2)
     if max_x <= min_x or max_y <= min_y:
         raise ValueError("invalid mouth box")
-    left = int(round(min_x * width))
-    right = int(round(max_x * width))
-    top = int(round(min_y * height))
-    bottom = int(round(max_y * height))
+    left = round(min_x * width)
+    right = round(max_x * width)
+    top = round(min_y * height)
+    bottom = round(max_y * height)
     crop = image_rgb[top:bottom, left:right]
     if crop.size == 0:
         raise ValueError("empty mouth crop")

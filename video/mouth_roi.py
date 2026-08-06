@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 from PIL import Image
@@ -117,10 +117,10 @@ def _write_rgb_or_gray_video(frames: np.ndarray, path: Path, fps: int) -> Path:
 
 def _crop_box(image_rgb: np.ndarray, box: dict[str, float], mouth_size: int) -> np.ndarray:
     height, width = image_rgb.shape[:2]
-    left = int(round(max(0.0, box["x"]) * width))
-    top = int(round(max(0.0, box["y"]) * height))
-    right = int(round(min(1.0, box["x"] + box["width"]) * width))
-    bottom = int(round(min(1.0, box["y"] + box["height"]) * height))
+    left = round(max(0.0, box["x"]) * width)
+    top = round(max(0.0, box["y"]) * height)
+    right = round(min(1.0, box["x"] + box["width"]) * width)
+    bottom = round(min(1.0, box["y"] + box["height"]) * height)
     if right <= left or bottom <= top:
         raise ValueError("invalid smoothed mouth ROI box")
     crop = image_rgb[top:bottom, left:right]
@@ -141,10 +141,10 @@ def _crop_aligned_face(image_rgb: np.ndarray, mouth_box: dict[str, float], outpu
         "height": min(1.0, side),
     }
     height, width = image_rgb.shape[:2]
-    left = int(round(face_box["x"] * width))
-    top = int(round(face_box["y"] * height))
-    right = int(round(min(1.0, face_box["x"] + face_box["width"]) * width))
-    bottom = int(round(min(1.0, face_box["y"] + face_box["height"]) * height))
+    left = round(face_box["x"] * width)
+    top = round(face_box["y"] * height)
+    right = round(min(1.0, face_box["x"] + face_box["width"]) * width)
+    bottom = round(min(1.0, face_box["y"] + face_box["height"]) * height)
     crop = image_rgb[top:bottom, left:right]
     if crop.size == 0:
         raise ValueError("empty aligned face crop")

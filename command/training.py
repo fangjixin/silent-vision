@@ -274,7 +274,7 @@ def train_phrase_classifier(
     if not isinstance(epochs, int) or isinstance(epochs, bool) or epochs < 1:
         raise ValueError("epochs must be a positive integer")
     if not isinstance(seed, int) or isinstance(seed, bool):
-        raise ValueError("seed must be an integer")
+        raise ValueError("seed must be an integer")  # noqa: TRY004
 
     _seed_everything(torch, seed)
     catalog = load_phrase_catalog(Path(catalog_path))
@@ -477,7 +477,7 @@ def _read_manifest(path: Path) -> list[dict[str, Any]]:
                 continue
             record = json.loads(line)
             if not isinstance(record, dict):
-                raise ValueError(
+                raise ValueError(  # noqa: TRY004
                     f"manifest line {line_number} must be a JSON object: {path}"
                 )
             records.append(record)
@@ -487,7 +487,7 @@ def _read_manifest(path: Path) -> list[dict[str, Any]]:
 def _read_json_object(path: Path, name: str) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError(f"{name} must be a JSON object")
+        raise ValueError(f"{name} must be a JSON object")  # noqa: TRY004
     return payload
 
 
@@ -504,7 +504,7 @@ def _validate_manifest_hashes(
 ) -> dict[str, str]:
     expected_hashes = inventory.get("manifestSha256")
     if not isinstance(expected_hashes, dict):
-        raise ValueError("inventory manifestSha256 must be an object")
+        raise ValueError("inventory manifestSha256 must be an object")  # noqa: TRY004
     manifest_roles = (
         "train.jsonl",
         "calibration-known.jsonl",
