@@ -32,7 +32,7 @@ The four scenes are:
 1. **POST-SURGERY** - A patient in a hospital room faces a tablet camera and silently forms a fixed request.
 2. **REHABILITATION** - A person with a voice disorder works with a therapist and confirms communication through a screen.
 3. **ACCESSIBLE COMMUNICATION** - A person with a hearing or speech disability communicates at a public-service counter through visible mouth movement and an assistive display.
-4. **SILENT CONTROL** - A person in a noisy or silence-required environment uses visible mouth movement to operate lighting or equipment.
+4. **SILENT CONTROL INPUT** - A person in a noisy or silence-required environment forms a visible command at a camera terminal. The interface shows a classifier decision that a separately integrated system could map to lighting or equipment control; the scene must not show Silent Vision directly operating a device.
 
 Every scene must keep the face, mouth, and environment legible. A subtle red mouth-recognition accent may connect the imagery to the product. Avoid science-fiction HUD clutter.
 
@@ -50,6 +50,10 @@ Product name:
 
 > SILENT VISION
 
+Visible product qualifier:
+
+> PERSONALIZED FIXED-PHRASE PROTOTYPE
+
 Main title:
 
 > A VOICE WITHOUT SOUND.
@@ -63,7 +67,7 @@ Scene labels:
 - `POST-SURGERY`
 - `REHABILITATION`
 - `ACCESSIBLE COMMUNICATION`
-- `SILENT CONTROL`
+- `SILENT CONTROL INPUT`
 
 Honest product boundary:
 
@@ -83,6 +87,7 @@ The implementation updates:
 
 - `docs/submission/poster-copy.md`;
 - `scripts/generate_submission_assets.py`;
+- `tests/test_submission_docs.py`;
 - `submission/Silent-Vision-Poster.pdf`;
 - `submission/Silent-Vision-Poster.png`;
 - `output/pdf/Silent-Vision-Poster.pdf`.
@@ -92,7 +97,9 @@ Generated source imagery must be stored inside the repository so rebuilding the 
 ## Accuracy and Safety Boundaries
 
 - Do not claim open-vocabulary lipreading, transcription, cross-speaker generalization, or measured bilingual accuracy.
+- The four photographed people represent target-user scenarios, not demonstrated cross-speaker performance. The visible `PERSONALIZED FIXED-PHRASE PROTOTYPE` qualifier must remain on the poster.
 - Do not imply that the prototype replaces clinical communication systems, sign language, speech-generating devices, or professional care.
+- Do not show Silent Vision completing a device action. The control scene may show only a classifier decision intended for a separately integrated control system.
 - Do not show a microphone as part of the recognition path.
 - Do not obscure the mouth with a mask, hand, visor, or medical equipment.
 - Keep the wording consistent with the fixed-phrase bilingual classifier and fail-closed `UNKNOWN` behavior.
@@ -108,7 +115,8 @@ Before delivery:
 5. Verify the QR code resolves to the source repository.
 6. Render the final PDF to PNG and inspect for clipping, overlap, weak contrast, or raster artifacts.
 7. Confirm the PDF is one A3 portrait page and the PNG matches it visually.
-8. Run the existing submission-asset and documentation tests.
+8. Replace the obsolete poster tests that require the removed light-command example and old three-card layout. The new contract must require the approved title, product qualifier, four scene labels, product boundary, technical footer, and absence of the removed example line.
+9. Run the updated submission-asset and documentation tests, including checks that all repository-owned source images exist and the generated poster can be rebuilt without network access.
 
 ## Non-Goals
 
