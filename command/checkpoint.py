@@ -172,9 +172,10 @@ def validate_phrase_checkpoint_schema(
     if device not in {"cpu", "cuda:0"}:
         raise ValueError("trainingSummary device must be cpu or cuda:0")
     training_summary["device"] = device
-    training_summary["deviceName"] = _non_blank_string(
-        training_summary["deviceName"], "trainingSummary deviceName"
-    )
+    if not isinstance(training_summary["deviceName"], str):
+        raise ValueError(  # noqa: TRY004
+            "trainingSummary deviceName must be a string"
+        )
     if training_summary.get("seed") != evidence_lineage["seed"]:
         raise ValueError("trainingSummary seed must match evidenceLineage seed")
     if training_summary.get("evidentiary") is not evidence_lineage["evidentiary"]:

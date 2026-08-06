@@ -336,6 +336,33 @@ def test_checkpoint_builds_dynamic_four_phrase_head(tmp_path):
     assert loaded.model.classifier.out_features == 4
 
 
+def test_checkpoint_creation_preserves_empty_rocm_device_name(tmp_path):
+    pytest.importorskip("torch")
+    from command.checkpoint import load_phrase_checkpoint, save_phrase_checkpoint
+    from command.model import build_fixed_phrase_model
+    from command.training import accelerator_provenance
+
+    rocm_torch = SimpleNamespace(
+        __version__="2.7.1+rocm6.3",
+        version=SimpleNamespace(hip="6.3"),
+        cuda=SimpleNamespace(get_device_name=lambda index: ""),
+    )
+    payload = valid_payload(build_fixed_phrase_model(4))
+    payload["evidenceLineage"]["evidentiary"] = True
+    payload["trainingSummary"].update(
+        {
+            "evidentiary": True,
+            **accelerator_provenance(rocm_torch, "cuda:0"),
+        }
+    )
+    path = tmp_path / "empty-device-name.pt"
+
+    save_phrase_checkpoint(path, payload)
+    loaded = load_phrase_checkpoint(path, "cpu")
+
+    assert loaded.training_summary["deviceName"] == ""
+
+
 def test_legacy_intent_checkpoint_has_migration_error(tmp_path):
     torch = pytest.importorskip("torch")
     from command.checkpoint import load_phrase_checkpoint
