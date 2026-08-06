@@ -17,8 +17,8 @@ const phraseCatalog = [
   },
 ];
 
-async function installRecordingFakes(page) {
-  await page.addInitScript((catalog) => {
+async function installRecordingFakes(page, { readyDelayMs = null } = {}) {
+  await page.addInitScript(({ catalog, readyDelayMs: delayMs }) => {
     window.sentWebSocketMessages = [];
     window.fetch = async () => new Response(
       JSON.stringify({ sessionId: "browser-test-session" }),
@@ -32,7 +32,7 @@ async function installRecordingFakes(page) {
         this.readyState = FakeWebSocket.OPEN;
         Promise.resolve().then(() => {
           this.onopen?.();
-          this.onmessage?.({
+          const sendReady = () => this.onmessage?.({
             data: JSON.stringify({
               type: "session.ready",
               parameters: {
@@ -43,6 +43,8 @@ async function installRecordingFakes(page) {
               },
             }),
           });
+          if (delayMs === null) sendReady();
+          else window.setTimeout(sendReady, delayMs);
         });
       }
 
@@ -79,7 +81,7 @@ async function installRecordingFakes(page) {
         this.onstop?.();
       }
     };
-  }, phraseCatalog);
+  }, { catalog: phraseCatalog, readyDelayMs });
 }
 
 async function phraseOptionValues(page) {
@@ -106,6 +108,21 @@ test("home page exposes camera controls and status", async ({ page }) => {
   await expect(page.locator("#startButton")).toBeVisible();
   await expect(page.locator("#cameraStatus")).toContainText("idle");
   await expect(page.locator("#bufferStatus")).toContainText("waiting");
+});
+
+test("waits for the catalog before fresh-page calibration", async ({ page }) => {
+  await installRecordingFakes(page, { readyDelayMs: 50 });
+  await page.goto("http://127.0.0.1:8000/");
+
+  await page.locator("#save-sample").click();
+  await expect.poll(() => sentMessage(page, "calibration.start")).toEqual({
+    type: "calibration.start",
+    profileId: "global",
+    language: "zh",
+    phraseId: "zh_light_on_hello",
+    phrase: "",
+    scope: "global",
+  });
 });
 
 test("records the selected language and catalog phrase", async ({ page }) => {

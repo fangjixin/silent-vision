@@ -43,11 +43,23 @@ async function connect(connectionGeneration) {
   const socket = new WebSocket(wsUrl(state.sessionId));
   state.ws = socket;
   socket.binaryType = "arraybuffer";
+  let socketOpened = false;
+  let sessionReadyReceived = false;
+  let resolveWhenReady;
+  const resolveConnectionWhenReady = () => {
+    if (socketOpened && sessionReadyReceived) resolveWhenReady?.();
+  };
   socket.onmessage = (event) => {
     if (state.ws !== socket || socketGeneration !== state.connectionGeneration) return;
-    handleEvent(JSON.parse(event.data));
+    const message = JSON.parse(event.data);
+    handleEvent(message);
+    if (message.type === "session.ready") {
+      sessionReadyReceived = true;
+      resolveConnectionWhenReady();
+    }
   };
   await new Promise((resolve, reject) => {
+    resolveWhenReady = resolve;
     socket.onclose = (event) => {
       if (state.ws !== socket || socketGeneration !== state.connectionGeneration) {
         reject(new Error("stale websocket closed"));
@@ -74,7 +86,8 @@ async function connect(connectionGeneration) {
       }
       console.info("Silent Vision WebSocket opened", { sessionId: state.sessionId });
       setText("socketStatus", "connected");
-      resolve();
+      socketOpened = true;
+      resolveConnectionWhenReady();
     };
     socket.onerror = (event) => {
       if (state.ws !== socket || socketGeneration !== state.connectionGeneration) return;
