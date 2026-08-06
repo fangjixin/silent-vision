@@ -236,6 +236,7 @@ class TorchCommandClassifierBackend:
         language: str,
         metadata: dict[str, object],
     ) -> CommandDecision:
+        selected_language = validate_recognition_language(language)
         started = perf_counter()
         frames = np.asarray(mouth_frames)
         tensor = self.torch.from_numpy(frames).unsqueeze(0).to(self.device)
@@ -243,7 +244,9 @@ class TorchCommandClassifierBackend:
             logits_tensor, embedding = self.loaded_checkpoint.model(tensor)
             logits_tensor = logits_tensor.squeeze(0)
         logits = [float(value) for value in logits_tensor.detach().cpu().tolist()]
-        scores = score_language_candidates(logits, self.phrase_languages, language)
+        scores = score_language_candidates(
+            logits, self.phrase_languages, selected_language
+        )
         best_index = scores.ranked_indices[0]
         best_probability = scores.probabilities[best_index]
         second_probability = (

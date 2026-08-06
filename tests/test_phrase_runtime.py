@@ -1,4 +1,6 @@
 import math
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -36,6 +38,42 @@ def test_language_validation_rejects_missing_unknown_and_unsupported_values(lang
     # Catches a regression that silently defaults malformed language selection.
     with pytest.raises(ValueError):
         validate_recognition_language(language)
+
+
+@pytest.mark.parametrize("language", [None, "unknown"])
+def test_torch_backend_rejects_invalid_language_before_model_execution(
+    mouth_clip, language
+):
+    # Catches a regression that validates after tensor allocation and model inference.
+    class Tensor:
+        def unsqueeze(self, dimension):
+            return self
+
+        def to(self, device):
+            return self
+
+    class Torch:
+        def from_numpy(self, frames):
+            return Tensor()
+
+        def inference_mode(self):
+            return nullcontext()
+
+    model_calls = []
+
+    def model(tensor):
+        model_calls.append(tensor)
+        raise AssertionError("model must not run for invalid language")
+
+    backend = object.__new__(TorchCommandClassifierBackend)
+    backend.torch = Torch()
+    backend.device = "cpu"
+    backend.loaded_checkpoint = SimpleNamespace(model=model)
+
+    with pytest.raises(ValueError, match="recognition language"):
+        backend.predict(mouth_clip, language, {})
+
+    assert model_calls == []
 
 
 @pytest.fixture
