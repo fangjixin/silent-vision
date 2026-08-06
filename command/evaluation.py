@@ -108,7 +108,9 @@ def build_evaluation_report(
         "mappedIntentAccuracy": _count(mapped_intent_correct, known_total),
         "knownAcceptanceRate": _count(known_accepted, known_total),
         "acceptedPhraseAccuracy": _count(accepted_known_correct, known_accepted),
-        "acceptedPrecision": _count(accepted_known_correct, known_accepted),
+        "acceptedPrecision": _count(
+            accepted_known_correct, known_accepted + unknown_accepted
+        ),
         "unknownFalseAcceptRate": _count(unknown_accepted, unknown_total),
         "unknownRejectionRate": _count(unknown_rejected, unknown_total),
     }

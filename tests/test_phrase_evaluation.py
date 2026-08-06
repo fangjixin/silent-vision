@@ -102,7 +102,15 @@ def test_evaluation_metrics_keep_acceptance_and_accuracy_separate():
     assert report["mappedIntentAccuracy"] == pytest.approx(2 / 3)
     assert report["knownAcceptanceRate"] == pytest.approx(2 / 3)
     assert report["acceptedPhraseAccuracy"] == pytest.approx(1 / 2)
-    assert report["acceptedPrecision"] == pytest.approx(1 / 2)
+    assert report["acceptedPrecision"] == pytest.approx(1 / 3)
+    assert report["rawCounts"]["acceptedPhraseAccuracy"] == {
+        "numerator": 1,
+        "denominator": 2,
+    }
+    assert report["rawCounts"]["acceptedPrecision"] == {
+        "numerator": 1,
+        "denominator": 3,
+    }
     assert report["unknownFalseAcceptRate"] == pytest.approx(1 / 2)
     assert report["unknownRejectionRate"] == pytest.approx(1 / 2)
     assert report["confusionMatrix"]["a"] == {"a": 1, "b": 1}

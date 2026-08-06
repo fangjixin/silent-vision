@@ -942,7 +942,7 @@ def test_evaluation_metrics_keep_acceptance_and_accuracy_separate():
     assert report["mappedIntentAccuracy"] == pytest.approx(2 / 3)
     assert report["knownAcceptanceRate"] == pytest.approx(2 / 3)
     assert report["acceptedPhraseAccuracy"] == pytest.approx(1 / 2)
-    assert report["acceptedPrecision"] == pytest.approx(1 / 2)
+    assert report["acceptedPrecision"] == pytest.approx(1 / 3)
     assert report["unknownFalseAcceptRate"] == pytest.approx(1 / 2)
     assert report["unknownRejectionRate"] == pytest.approx(1 / 2)
     assert report["confusionMatrix"]["a"] == {"a": 1, "b": 1}
@@ -957,7 +957,7 @@ Expected: FAIL because `command.evaluation` does not exist.
 
 - [ ] **Step 3: Implement report aggregation**
 
-Define phrase accuracy as correct top-1 phrase predictions divided by all known clips, including rejected clips. Define mapped-intent accuracy by mapping expected and predicted phrase IDs through `phrase_intents`. Define known acceptance as accepted known clips divided by all known clips. Define accepted-phrase accuracy and accepted precision as correctly predicted accepted known clips divided by accepted known clips, returning `null` when none are accepted. Define unrelated false acceptance as accepted unrelated clips divided by all unrelated clips, and rejection as its complement. Include raw integer numerators and denominators beside every rate, a phrase-by-phrase count object, and a confusion matrix that includes rejected predictions under `UNKNOWN`.
+Define phrase accuracy as correct top-1 phrase predictions divided by all known clips, including rejected clips. Define mapped-intent accuracy by mapping expected and predicted phrase IDs through `phrase_intents`. Define known acceptance as accepted known clips divided by all known clips. Define accepted-phrase accuracy as correctly predicted accepted known clips divided by accepted known clips. Define accepted precision as correctly predicted accepted known clips divided by all accepted clips, including accepted unrelated clips. Return `null` when a metric's denominator is zero. Define unrelated false acceptance as accepted unrelated clips divided by all unrelated clips, and rejection as its complement. Include raw integer numerators and denominators beside every rate, a phrase-by-phrase count object, and a confusion matrix that includes rejected predictions under `UNKNOWN`.
 
 - [ ] **Step 4: Rewrite validation to use frozen checkpoint thresholds**
 
