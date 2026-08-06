@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 import qrcode
+from PIL import Image, ImageOps
 from qrcode.constants import ERROR_CORRECT_M
 from reportlab.lib.colors import Color, HexColor
 from reportlab.lib.pagesizes import A3, A4
@@ -29,18 +30,27 @@ POSTER_SOURCE = ROOT / "docs/submission/poster-copy.md"
 SUBMISSION = ROOT / "submission"
 PDF_OUTPUT = ROOT / "output/pdf"
 REPOSITORY_URL = "https://github.com/fangjixin/silent-vision"
+POSTER_SCENE_DIR = SUBMISSION / "assets/poster"
+POSTER_SCENES = (
+    ("POST-SURGERY", POSTER_SCENE_DIR / "post-surgery.png", (0.50, 0.42)),
+    ("REHABILITATION", POSTER_SCENE_DIR / "rehabilitation.png", (0.50, 0.42)),
+    (
+        "ACCESSIBLE COMMUNICATION",
+        POSTER_SCENE_DIR / "accessible-communication.png",
+        (0.50, 0.48),
+    ),
+    (
+        "SILENT CONTROL INPUT",
+        POSTER_SCENE_DIR / "silent-control-input.png",
+        (0.50, 0.48),
+    ),
+)
 PROFILE_EVIDENCE_STATUS = (
     "Pending: English recordings, bilingual training, the official Radeon run, "
     "final evaluation report, and recorded demonstration. No bilingual accuracy "
     "claim is made before that final report. Small-data smoke artifacts are "
     "non-evidentiary."
 )
-POSTER_EVIDENCE_STATUS = (
-    "Pending: English recordings, bilingual training, ROCm execution, and final "
-    "evaluation. No bilingual accuracy claim before the final report. Small-data "
-    "smoke proves execution only."
-)
-
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 CJK_FONT = "STSong-Light"
 
@@ -74,11 +84,18 @@ def _read_reviewed_copy() -> tuple[str, str]:
             poster,
             [
                 REPOSITORY_URL,
-                "Hello, please turn on the light.",
-                "Have you eaten?",
-                "user selects the language",
-                "selected-language softmax",
-                "No bilingual accuracy",
+                "SILENT VISION",
+                "PERSONALIZED FIXED-PHRASE PROTOTYPE",
+                "A VOICE WITHOUT SOUND.",
+                "Visual communication for people who can form words but cannot speak them aloud.",
+                "POST-SURGERY",
+                "REHABILITATION",
+                "ACCESSIBLE COMMUNICATION",
+                "SILENT CONTROL INPUT",
+                "Four registered phrases · Chinese + English · Exact phrase or safe UNKNOWN",
+                "Camera-only · No audio capture · ROCm PyTorch on AMD Radeon",
+                "does not directly control a device",
+                "not open-vocabulary lipreading",
             ],
         ),
     }
@@ -601,6 +618,61 @@ def _qr_image() -> ImageReader:
     return ImageReader(buffer)
 
 
+def _poster_image_reader(
+    path: Path,
+    width: float,
+    height: float,
+    centering: tuple[float, float],
+) -> ImageReader:
+    if not path.is_file():
+        raise FileNotFoundError(f"Poster scene image not found: {path}")
+    target = (max(1, round(width * 2)), max(1, round(height * 2)))
+    with Image.open(path) as source:
+        fitted = ImageOps.fit(
+            source.convert("RGB"),
+            target,
+            Image.Resampling.LANCZOS,
+            centering=centering,
+        )
+        buffer = io.BytesIO()
+        fitted.save(buffer, format="JPEG", quality=92, optimize=True)
+    buffer.seek(0)
+    return ImageReader(buffer)
+
+
+def _draw_poster_scene(
+    pdf: canvas.Canvas,
+    *,
+    label: str,
+    path: Path,
+    centering: tuple[float, float],
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    label_at_top: bool,
+) -> None:
+    reader = _poster_image_reader(path, width, height, centering)
+    pdf.drawImage(
+        reader,
+        x,
+        y,
+        width,
+        height,
+        preserveAspectRatio=False,
+        mask="auto",
+    )
+    label_y = y + height - 34 if label_at_top else y
+    pdf.saveState()
+    pdf.setFillAlpha(0.72)
+    pdf.setFillColor(CHARCOAL)
+    pdf.rect(x, label_y, width, 34, fill=1, stroke=0)
+    pdf.restoreState()
+    pdf.setFillColor(WHITE)
+    pdf.setFont("Helvetica-Bold", 8.5)
+    pdf.drawString(x + 14, label_y + 13, label)
+
+
 def build_poster_pdf(output: Path) -> None:
     """Create the one-page A3 portrait poster."""
     _read_reviewed_copy()
@@ -610,139 +682,106 @@ def build_poster_pdf(output: Path) -> None:
     pdf.setAuthor("Jixin Fang")
     pdf.setSubject("Track 1 project poster")
     width, height = A3
-    pdf.setFillColor(OFF_WHITE)
-    pdf.rect(0, 0, width, height, fill=1, stroke=0)
-    pdf.setFillColor(RADEON_RED)
-    pdf.rect(0, height - 20, width, 20, fill=1, stroke=0)
-    _label(pdf, "Track 1 / Jixin Fang", 60, height - 62, MUTED)
+
+    footer_height = 340
+    mosaic_height = height - footer_height
+    column_width = width / 2
+    row_height = mosaic_height / 2
+    for index, (label, path, centering) in enumerate(POSTER_SCENES):
+        column = index % 2
+        top_row = index < 2
+        _draw_poster_scene(
+            pdf,
+            label=label,
+            path=path,
+            centering=centering,
+            x=column * column_width,
+            y=footer_height + (row_height if top_row else 0),
+            width=column_width,
+            height=row_height,
+            label_at_top=top_row,
+        )
+
+    band_height = 128
+    band_y = footer_height + row_height - band_height / 2
+    pdf.saveState()
+    pdf.setFillAlpha(0.82)
     pdf.setFillColor(CHARCOAL)
-    pdf.setFont("Helvetica-Bold", 62)
-    pdf.drawString(60, height - 137, "SILENT VISION")
+    pdf.rect(0, band_y, width, band_height, fill=1, stroke=0)
+    pdf.restoreState()
+    pdf.setFillColor(WHITE)
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(52, band_y + 105, "SILENT VISION")
     pdf.setFillColor(RADEON_RED)
-    pdf.setFont("Helvetica-Bold", 29)
-    pdf.drawString(60, height - 184, "A fixed phrase. A silent clip. An inspectable decision.")
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(158, band_y + 105, "PERSONALIZED FIXED-PHRASE PROTOTYPE")
+    pdf.setFillColor(WHITE)
+    pdf.setFont("Helvetica-Bold", 38)
+    pdf.drawString(52, band_y + 55, "A VOICE WITHOUT SOUND.")
     _paragraph(
         pdf,
-        "Personalized visual command recognition - not open-vocabulary lipreading.",
-        60,
-        height - 220,
-        width - 120,
-        size=17,
-        leading=22,
-        color=MUTED,
-    )
-    _label(pdf, "Four-phrase bilingual catalog", 60, height - 257)
-    pdf.setFillColor(CHARCOAL)
-    pdf.setFont(CJK_FONT, 13)
-    pdf.drawString(60, height - 280, "你好，请帮我打开灯  |  你吃饭了吗？")
-    pdf.setFont("Helvetica", 13)
-    pdf.drawString(60, height - 303, "Hello, please turn on the light.  |  Have you eaten?")
-    _paragraph(
-        pdf,
-        "The user selects the language before recording. Selected-language softmax scores only that language, then exact catalog text or heuristic UNKNOWN is returned.",
-        60,
-        height - 327,
-        width - 120,
-        size=10,
+        "Visual communication for people who can form words but cannot speak them aloud.",
+        52,
+        band_y + 27,
+        width - 104,
+        size=11.5,
         leading=14,
-        color=MUTED,
-    )
-    _label(pdf, "How it works", 60, height - 373)
-    step_titles = ["Record", "CPU decode", "CPU crop", "Radeon", "Gate + route"]
-    step_bodies = [
-        "Select zh or en; 2-5 second WebM",
-        "PyAV at 25 FPS",
-        "Face, align, 96 x 96 mouth",
-        "Fixed-phrase Torch model",
-        "Selected-language softmax + gates",
-    ]
-    gap = 14
-    step_width = (width - 120 - gap * 4) / 5
-    y = height - 551
-    for index, (title, body) in enumerate(zip(step_titles, step_bodies)):
-        x = 60 + index * (step_width + gap)
-        _card(
-            pdf,
-            x,
-            y,
-            step_width,
-            145,
-            f"{index + 1}. {title}",
-            body,
-            title_size=12.5,
-            body_size=9.2,
-            leading=13,
-        )
-        if index < 4:
-            _arrow(pdf, x + step_width + 3, y + 72, x + step_width + gap - 3, y + 72)
-    _label(pdf, "Where it fits", 60, height - 580)
-    fit_width = (width - 148) / 3
-    fits = [
-        ("Creator control input", "Another application can map an accepted intent to capture, cue, or editing actions."),
-        ("Accessible service", "A small visual phrase set can supplement other communication channels."),
-        ("Noisy or private room", "A command input when microphone recognition is unreliable or unwanted."),
-    ]
-    for index, (title, body) in enumerate(fits):
-        _card(
-            pdf,
-            60 + index * (fit_width + 14),
-            height - 766,
-            fit_width,
-            155,
-            title,
-            body,
-            body_size=10,
-            leading=14,
-        )
-    pdf.setFillColor(CHARCOAL)
-    pdf.roundRect(60, height - 870, width - 120, 92, 12, fill=1, stroke=0)
-    _label(pdf, "Safety rule", 82, height - 810)
-    _paragraph(
-        pdf,
-        "Both calibrated gates must pass. Heuristic UNKNOWN carries no exact phrase text and cannot execute.",
-        82,
-        height - 842,
-        width - 164,
-        font="Helvetica-Bold",
-        size=18,
-        leading=23,
         color=WHITE,
     )
-    _label(pdf, "AMD Radeon + ROCm", 60, height - 910)
+
+    pdf.setFillColor(OFF_WHITE)
+    pdf.rect(0, 0, width, footer_height, fill=1, stroke=0)
+    pdf.setFillColor(RADEON_RED)
+    pdf.rect(0, footer_height - 8, width, 8, fill=1, stroke=0)
     _paragraph(
         pdf,
-        "CPU handles video and face preprocessing. ROCm PyTorch runs the learned fixed-phrase model on Radeon cuda:0.",
-        60,
-        height - 940,
-        width - 350,
-        size=13,
-        leading=19,
+        "Four registered phrases · Chinese + English · Exact phrase or safe UNKNOWN",
+        52,
+        245,
+        width - 104,
+        font="Helvetica-Bold",
+        size=16,
+        leading=20,
     )
-    pdf.setFillColor(PALE_RED)
-    pdf.roundRect(60, 118, width - 360, 92, 10, fill=1, stroke=0)
-    _label(pdf, "Evidence status", 78, 182)
     _paragraph(
         pdf,
-        POSTER_EVIDENCE_STATUS,
-        78,
-        154,
-        width - 396,
-        size=10.5,
-        leading=15,
+        "Camera-only · No audio capture · ROCm PyTorch on AMD Radeon",
+        52,
+        169,
+        width - 104,
+        font="Helvetica-Bold",
+        size=14,
+        leading=18,
+        color=RADEON_RED,
     )
-    qr_size = 158
-    qr_x = width - 60 - qr_size
-    pdf.setFillColor(WHITE)
-    pdf.roundRect(qr_x - 10, 104, qr_size + 20, qr_size + 45, 10, fill=1, stroke=0)
-    pdf.drawImage(_qr_image(), qr_x, 132, qr_size, qr_size, preserveAspectRatio=True, mask="auto")
+    _paragraph(
+        pdf,
+        "Target-user scenes · Structured decisions for separate integration · No direct device control",
+        52,
+        137,
+        width - 52 - 112 - 48,
+        size=9.5,
+        leading=13,
+        color=MUTED,
+    )
+
+    qr_size = 112
+    qr_x = width - 52 - qr_size
+    pdf.drawImage(
+        _qr_image(),
+        qr_x,
+        48,
+        qr_size,
+        qr_size,
+        preserveAspectRatio=True,
+        mask="auto",
+    )
     pdf.setFillColor(CHARCOAL)
-    pdf.setFont("Helvetica-Bold", 9)
-    pdf.drawCentredString(qr_x + qr_size / 2, 116, "SOURCE REPOSITORY")
-    pdf.setFont("Helvetica-Bold", 12)
-    pdf.drawString(60, 74, "github.com/fangjixin/silent-vision")
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(52, 72, "github.com/fangjixin/silent-vision")
     pdf.setFillColor(MUTED)
-    pdf.setFont("Helvetica", 8.5)
-    pdf.drawRightString(width - 60, 74, "Exact catalog text, explicit rejection, no audio capture")
+    pdf.setFont("Helvetica", 9)
+    pdf.drawString(52, 48, "Track 1 · Jixin Fang")
     pdf.showPage()
     pdf.save()
 

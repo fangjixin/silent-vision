@@ -1,70 +1,38 @@
-# Silent Vision
+# SILENT VISION
 
-Copy contract: `scripts/generate_submission_assets.py` is the canonical copy and
-layout source for the generated poster. This reviewed source must be updated with
-the generator whenever technical claims or evidence status change.
+Copy contract: `scripts/generate_submission_assets.py` is the canonical layout
+source for the generated poster. This reviewed source must be updated with the
+generator whenever product boundaries change.
 
-## A fixed phrase. A silent clip. An inspectable decision.
+## PERSONALIZED FIXED-PHRASE PROTOTYPE
 
-Personalized visual command recognition from a 2-5 second camera clip with audio
-disabled. Silent Vision is closed-set, not open-vocabulary lipreading.
+## A VOICE WITHOUT SOUND.
 
-### Four-phrase bilingual catalog
+Visual communication for people who can form words but cannot speak them aloud.
 
-- `你好，请帮我打开灯` -> `LIGHT_ON`
-- `你吃饭了吗？` -> `CHAT_OTHER`
-- `Hello, please turn on the light.` -> `LIGHT_ON`
-- `Have you eaten?` -> `CHAT_OTHER`
+### Target-user scenes
 
-The user selects the language (`zh` or `en`) before recording; it is not inferred
-from the clip. Selected-language softmax scores only the enabled entries for that
-language. The model predicts a stable phrase ID, and exact displayed text and
-intent come from the checkpoint catalog. `UNKNOWN` is heuristic rejection, not a
-trained class or a guarantee about every unseen phrase.
+- POST-SURGERY
+- REHABILITATION
+- ACCESSIBLE COMMUNICATION
+- SILENT CONTROL INPUT
 
-### How it works
+The four fictional people represent target-user scenarios, not demonstrated
+cross-speaker performance. Silent Vision returns a structured classifier decision;
+a separately integrated application may map an accepted decision to an action.
+Silent Vision does not directly control a device.
 
-1. Select the language, then record one silent WebM clip.
-2. Decode, detect, align, and crop the mouth on CPU.
-3. Run the fixed-phrase Torch model on AMD Radeon through ROCm.
-4. Use selected-language softmax, then require probability and phrase-centroid distance.
-5. Return an exact phrase decision or reject it as `UNKNOWN`.
+### Product boundary
 
-### Practical fit
-
-Creator control input
-
-A deliberate hands-free signal that another application can map to capture,
-cue, or editing actions.
-
-Accessible service
-
-A small visual phrase set that supplements other communication channels.
-
-Noisy or private spaces
-
-A command input when a microphone is unreliable or continuous audio capture is
-unwanted.
-
-### Safety boundary
-
-Rejected clips carry no matched phrase text and cannot execute. The current
-repository returns structured decisions only; it does not control a device or
-content-creation application.
+Four registered phrases · Chinese + English · Exact phrase or safe UNKNOWN
 
 ### AMD Radeon + ROCm
 
-CPU: video decode, face detection, alignment, and mouth crop.
+Camera-only · No audio capture · ROCm PyTorch on AMD Radeon
 
-Radeon: learned temporal model, phrase logits, and normalized embedding through
-ROCm PyTorch on `cuda:0`.
-
-English recordings, bilingual training, ROCm execution, and final evaluation
-remain to be recorded. No bilingual accuracy claim is made before the final
-report. Small-data smoke proves pipeline execution only.
+The current prototype is closed-set, not open-vocabulary lipreading. No measured
+bilingual accuracy or cross-speaker generalization claim is made on this poster.
 
 ### Source
-
-github.com/fangjixin/silent-vision
 
 https://github.com/fangjixin/silent-vision

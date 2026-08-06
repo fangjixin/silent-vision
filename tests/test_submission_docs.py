@@ -28,6 +28,10 @@ def _relative_markdown_links(path: Path) -> list[Path]:
     return targets
 
 
+def _pdf_text(path: Path) -> str:
+    return "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+
+
 @pytest.mark.parametrize("path", [ROOT / "README.md", ROOT / "submission/README.md"])
 def test_public_markdown_links_resolve(path):
     links = _relative_markdown_links(path)
@@ -125,22 +129,10 @@ def test_profile_and_poster_pdf_structure():
     assert float(poster_box.height) == pytest.approx(1190.55, abs=0.01)
 
 
-def test_profile_and_poster_assets_describe_bilingual_language_routing():
-    reviewed_sources = [
-        ROOT / "docs/submission/project-profile-source.md",
-        ROOT / "docs/submission/poster-copy.md",
-    ]
-    generated_assets = [
-        ROOT / "submission/Silent-Vision-Project-Profile.pdf",
-        ROOT / "submission/Silent-Vision-Poster.pdf",
-    ]
-    source_text = "\n".join(path.read_text(encoding="utf-8") for path in reviewed_sources)
-    asset_text = "\n".join(
-        "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
-        for path in generated_assets
-    )
-
-    for text in (source_text, asset_text):
+def test_profile_assets_describe_bilingual_language_routing():
+    source = (ROOT / "docs/submission/project-profile-source.md").read_text(encoding="utf-8")
+    generated = _pdf_text(ROOT / "submission/Silent-Vision-Project-Profile.pdf")
+    for text in (source, generated):
         assert "你好，请帮我打开灯" in text
         assert "你吃饭了吗？" in text
         assert "Hello, please turn on the light." in text
@@ -150,25 +142,37 @@ def test_profile_and_poster_assets_describe_bilingual_language_routing():
         assert "no bilingual accuracy" in text.lower()
 
 
-def test_poster_fit_cards_do_not_overlap_the_safety_panel():
-    """Fails when the Where-it-fits cards intrude into the safety panel."""
+def test_poster_assets_use_the_approved_human_centered_copy():
+    source = (ROOT / "docs/submission/poster-copy.md").read_text(encoding="utf-8")
+    generated = _pdf_text(ROOT / "submission/Silent-Vision-Poster.pdf")
+    required = {
+        "SILENT VISION",
+        "PERSONALIZED FIXED-PHRASE PROTOTYPE",
+        "A VOICE WITHOUT SOUND.",
+        "Visual communication for people who can form words but cannot speak them aloud.",
+        "POST-SURGERY",
+        "REHABILITATION",
+        "ACCESSIBLE COMMUNICATION",
+        "SILENT CONTROL INPUT",
+        "Four registered phrases · Chinese + English · Exact phrase or safe UNKNOWN",
+        "Camera-only · No audio capture · ROCm PyTorch on AMD Radeon",
+    }
+    forbidden = {"Please turn on the light.", "Have you eaten?", "directly controls"}
+    for text in (source, generated):
+        assert all(phrase in text for phrase in required)
+        assert not any(phrase in text for phrase in forbidden)
+
+
+def test_poster_uses_four_large_scene_images_instead_of_report_cards():
     with pdfplumber.open(ROOT / "submission/Silent-Vision-Poster.pdf") as pdf:
         page = pdf.pages[0]
-        fit_cards = [
-            curve
-            for curve in page.curves
-            if curve["height"] == pytest.approx(155, abs=0.01)
-            and curve["width"] == pytest.approx((page.width - 148) / 3, abs=0.01)
+        large_images = [
+            image
+            for image in page.images
+            if image["width"] >= page.width * 0.45
+            and image["height"] >= page.height * 0.25
         ]
-        safety_panel = next(
-            curve
-            for curve in page.curves
-            if curve["height"] == pytest.approx(92, abs=0.01)
-            and curve["width"] == pytest.approx(page.width - 120, abs=0.01)
-        )
-
-    assert len(fit_cards) == 3
-    assert safety_panel["y1"] <= min(card["y0"] for card in fit_cards)
+    assert len(large_images) == 4
 
 
 def test_poster_png_is_a_full_size_a3_render():
