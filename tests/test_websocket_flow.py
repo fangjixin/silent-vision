@@ -305,6 +305,17 @@ def test_frontend_index_is_served(app):
     assert "startButton" in response.text
 
 
+def test_frontend_serves_language_and_catalog_calibration_controls(app):
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert 'id="recognition-language"' in response.text
+    assert 'id="calibration-language"' in response.text
+    assert 'id="calibration-phrase-id"' in response.text
+    assert 'id="calibration-unknown-phrase"' in response.text
+    assert 'id="calibration-intent"' not in response.text
+
+
 def test_websocket_allows_wildcard_origin():
     app = create_app(Settings(command_backend="fake", allowed_origins="*"))
     client = TestClient(app)

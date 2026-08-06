@@ -12,6 +12,7 @@ const state = {
     captureCountdownSeconds: 3,
     commandClipMinSeconds: 2,
     commandClipMaxSeconds: 5,
+    phraseCatalog: [],
   },
   streaming: false,
   connectionGeneration: 0,
@@ -83,8 +84,48 @@ async function connect(connectionGeneration) {
   });
 }
 
+function renderCalibrationPhraseOptions() {
+  const language = document.getElementById("calibration-language").value;
+  const phraseSelect = document.getElementById("calibration-phrase-id");
+  const catalog = Array.isArray(state.parameters.phraseCatalog)
+    ? state.parameters.phraseCatalog
+    : [];
+  const phrases = catalog.filter((phrase) => phrase.language === language && phrase.enabled);
+  const selectedPhraseId = phraseSelect.value;
+
+  phraseSelect.replaceChildren();
+  for (const phrase of phrases) {
+    const option = document.createElement("option");
+    option.value = phrase.phraseId;
+    option.textContent = phrase.text;
+    phraseSelect.append(option);
+  }
+  const unknownOption = document.createElement("option");
+  unknownOption.value = "UNKNOWN";
+  unknownOption.textContent = "UNKNOWN";
+  phraseSelect.append(unknownOption);
+  phraseSelect.disabled = false;
+
+  if ([...phraseSelect.options].some((option) => option.value === selectedPhraseId)) {
+    phraseSelect.value = selectedPhraseId;
+  }
+  updateUnknownPhraseInput();
+}
+
+function updateUnknownPhraseInput() {
+  const phraseSelect = document.getElementById("calibration-phrase-id");
+  const unknownPhrase = document.getElementById("calibration-unknown-phrase");
+  const isUnknown = phraseSelect.value === "UNKNOWN";
+  unknownPhrase.disabled = !isUnknown;
+  unknownPhrase.required = isUnknown;
+  if (!isUnknown) unknownPhrase.value = "";
+}
+
 function handleEvent(event) {
-  if (event.type === "session.ready") state.parameters = event.parameters;
+  if (event.type === "session.ready") {
+    state.parameters = event.parameters;
+    renderCalibrationPhraseOptions();
+  }
   if (event.type === "vision.result") setText("visionStatus", event.faceDetected ? "mouth detected" : "mouth reused");
   if (event.type === "clip.received") setText("bufferStatus", `${event.bytes} bytes`);
   if (event.type === "command.result") {
@@ -186,7 +227,11 @@ async function recordAndSendClip(connectionGeneration) {
   await state.camera.startPreview();
   await runCaptureCountdown(connectionGeneration);
   if (connectionGeneration !== state.connectionGeneration || !state.ws) return;
-  state.ws.send(JSON.stringify({ type: "clip.start", profileId: GLOBAL_PROFILE_ID }));
+  state.ws.send(JSON.stringify({
+    type: "clip.start",
+    profileId: GLOBAL_PROFILE_ID,
+    language: document.getElementById("recognition-language").value,
+  }));
   state.phase = "recording";
   state.streaming = true;
   setText("cameraStatus", "recording");
@@ -201,9 +246,11 @@ async function recordAndSendClip(connectionGeneration) {
 }
 
 async function recordAndSendCalibrationClip(connectionGeneration) {
-  const intent = document.getElementById("calibration-intent").value;
   const language = document.getElementById("calibration-language").value;
-  const phrase = document.getElementById("calibration-phrase").value.trim();
+  const phraseId = document.getElementById("calibration-phrase-id").value;
+  const phrase = phraseId === "UNKNOWN"
+    ? document.getElementById("calibration-unknown-phrase").value.trim()
+    : "";
   state.camera = new ClipRecorder({
     video: document.getElementById("cameraPreview"),
     fps: state.parameters.captureFps || 25,
@@ -214,8 +261,8 @@ async function recordAndSendCalibrationClip(connectionGeneration) {
   state.ws.send(JSON.stringify({
     type: "calibration.start",
     profileId: GLOBAL_PROFILE_ID,
-    intent,
     language,
+    phraseId,
     phrase,
     scope: "global",
   }));
@@ -288,6 +335,12 @@ document.getElementById("startButton").addEventListener("click", async () => {
 });
 
 document.getElementById("save-sample").addEventListener("click", async () => {
+  const phraseSelect = document.getElementById("calibration-phrase-id");
+  const unknownPhrase = document.getElementById("calibration-unknown-phrase");
+  if (phraseSelect.value === "UNKNOWN" && !unknownPhrase.value.trim()) {
+    unknownPhrase.reportValidity();
+    return;
+  }
   cleanupCurrentStream();
   const connectionGeneration = state.connectionGeneration;
   resetUiForNewStream();
@@ -311,5 +364,8 @@ document.getElementById("stopButton").addEventListener("click", () => {
   cleanupCurrentStream();
   setStoppedUiState();
 });
+
+document.getElementById("calibration-language").addEventListener("change", renderCalibrationPhraseOptions);
+document.getElementById("calibration-phrase-id").addEventListener("change", updateUnknownPhraseInput);
 
 document.getElementById("profile-id").textContent = `Profile: ${state.profileId}`;
