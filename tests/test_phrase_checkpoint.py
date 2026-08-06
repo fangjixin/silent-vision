@@ -65,7 +65,13 @@ def metadata_payload() -> dict:
                 "enabled": True,
             },
         ],
-        "featureConfig": {"fps": 25, "height": 96, "width": 96, "downsample": 16},
+        "featureConfig": {
+            "fps": 25,
+            "frames": 125,
+            "height": 96,
+            "width": 96,
+            "downsample": 16,
+        },
         "modelConfig": {"embeddingDim": 64, "parameterCap": 150000},
         "decisionThresholds": {
             "minProbability": 0.80,
@@ -85,7 +91,14 @@ def metadata_payload() -> dict:
             "manifestSha256": dict(MANIFEST_HASHES),
             "evidentiary": False,
         },
-        "trainingSummary": {"seed": 17, "evidentiary": False},
+        "trainingSummary": {
+            "seed": 17,
+            "evidentiary": False,
+            "torchVersion": "2.2.2",
+            "hipVersion": None,
+            "device": "cpu",
+            "deviceName": "local CPU test fixture",
+        },
     }
     payload["evidenceLineage"]["catalogSha256"] = catalog_sha256(
         PhraseCatalog.from_records(payload["phraseCatalog"])
@@ -170,6 +183,18 @@ def test_checkpoint_phrase_ids_must_match_enabled_catalog_order():
         validate_phrase_checkpoint_schema(payload)
 
 
+@pytest.mark.parametrize("frames", [None, 0, 124, 126, "125"])
+def test_checkpoint_requires_fixed_temporal_frame_count(frames):
+    payload = metadata_payload()
+    if frames is None:
+        payload["featureConfig"].pop("frames")
+    else:
+        payload["featureConfig"]["frames"] = frames
+
+    with pytest.raises(ValueError, match="featureConfig frames must be 125"):
+        validate_phrase_checkpoint_schema(payload)
+
+
 def test_checkpoint_rejects_unknown_as_a_trained_phrase_class():
     payload = metadata_payload()
     payload["phraseCatalog"][0]["intent"] = "UNKNOWN"
@@ -235,6 +260,50 @@ def test_checkpoint_requires_complete_explicit_evidence_lineage(mutation, messag
     mutation(payload["evidenceLineage"])
 
     with pytest.raises(ValueError, match=message):
+        validate_phrase_checkpoint_schema(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda summary: summary.pop("torchVersion"),
+            "trainingSummary missing required keys: torchVersion",
+        ),
+        (
+            lambda summary: summary.pop("hipVersion"),
+            "trainingSummary missing required keys: hipVersion",
+        ),
+        (
+            lambda summary: summary.pop("device"),
+            "trainingSummary missing required keys: device",
+        ),
+        (
+            lambda summary: summary.pop("deviceName"),
+            "trainingSummary missing required keys: deviceName",
+        ),
+        (lambda summary: summary.__setitem__("torchVersion", ""), "torchVersion"),
+        (lambda summary: summary.__setitem__("hipVersion", ""), "hipVersion"),
+        (lambda summary: summary.__setitem__("device", "mps"), "device"),
+        (lambda summary: summary.__setitem__("deviceName", 123), "deviceName"),
+    ],
+)
+def test_checkpoint_rejects_missing_or_malformed_accelerator_provenance(
+    mutation, message
+):
+    payload = metadata_payload()
+    mutation(payload["trainingSummary"])
+
+    with pytest.raises(ValueError, match=message):
+        validate_phrase_checkpoint_schema(payload)
+
+
+def test_evidentiary_checkpoint_requires_rocm_accelerator_provenance():
+    payload = metadata_payload()
+    payload["evidenceLineage"]["evidentiary"] = True
+    payload["trainingSummary"]["evidentiary"] = True
+
+    with pytest.raises(ValueError, match="ROCm/HIP"):
         validate_phrase_checkpoint_schema(payload)
 
 

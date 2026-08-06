@@ -202,6 +202,7 @@ def test_real_torch_websocket_accepts_catalog_text_and_rejects_without_execution
             "phraseCatalog": phrase_catalog,
             "featureConfig": {
                 "fps": 25,
+                "frames": 125,
                 "height": 96,
                 "width": 96,
                 "downsample": 16,
@@ -233,7 +234,14 @@ def test_real_torch_websocket_accepts_catalog_text_and_rejects_without_execution
                 },
                 "evidentiary": False,
             },
-            "trainingSummary": {"seed": 17, "evidentiary": False},
+            "trainingSummary": {
+                "seed": 17,
+                "evidentiary": False,
+                "torchVersion": str(torch.__version__),
+                "hipVersion": str(torch.version.hip),
+                "device": "cuda:0",
+                "deviceName": str(torch.cuda.get_device_name(0)),
+            },
         },
     )
     patch_clip_pipeline(monkeypatch)

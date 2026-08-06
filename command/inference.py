@@ -15,6 +15,7 @@ from backend.config import Settings
 from backend.schemas import CommandDecision
 from command.labels import COMMAND_LABELS, EXECUTABLE_INTENTS, CommandIntent
 from command.language import score_language_candidates, validate_recognition_language
+from command.model import normalize_clip_length
 from command.prototype import (
     extract_roi_embedding,
     load_profile_prototypes,
@@ -241,7 +242,8 @@ class TorchCommandClassifierBackend:
         selected_language = validate_recognition_language(language)
         started = perf_counter()
         frames = np.asarray(mouth_frames)
-        tensor = self.torch.from_numpy(frames).unsqueeze(0).to(self.device)
+        tensor = normalize_clip_length(self.torch.from_numpy(frames)).unsqueeze(0)
+        tensor = tensor.to(self.device)
         with self.torch.inference_mode():
             logits_tensor, embedding = self.loaded_checkpoint.model(tensor)
             logits_tensor = logits_tensor.squeeze(0)

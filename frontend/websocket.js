@@ -200,6 +200,13 @@ function updateUnknownPhraseInput() {
 }
 
 function handleEvent(event) {
+  if (event.type === "error") {
+    console.warn("Silent Vision server error", event);
+    cleanupCurrentStream();
+    setStoppedUiState();
+    setText("visionStatus", `${event.code}: ${event.message}`);
+    return;
+  }
   if (event.type === "session.ready") {
     state.parameters = event.parameters;
     applyPhraseCatalog(event.parameters.phraseCatalog, "websocket");
@@ -235,8 +242,6 @@ function handleEvent(event) {
   }
   if (event.type === "stream.stopped") setStoppedUiState();
   if (event.type === "stream.committed") setText("visionStatus", "submitted");
-  if (event.type === "error") setText("visionStatus", `${event.code}: ${event.message}`);
-  if (event.type === "error") console.warn("Silent Vision server error", event);
 }
 
 function resetUiForNewStream() {

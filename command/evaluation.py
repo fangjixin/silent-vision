@@ -166,7 +166,12 @@ def evaluate_checkpoint(
     from backend.config import Settings
     from command.checkpoint import load_phrase_checkpoint
     from command.inference import TorchCommandClassifierBackend
-    from command.training import ManifestDataset, _sha256_file, _write_json_atomic
+    from command.training import (
+        ManifestDataset,
+        _sha256_file,
+        _write_json_atomic,
+        accelerator_provenance,
+    )
 
     validated_checkpoint = load_phrase_checkpoint(checkpoint_path, "cpu")
     _validate_checkpoint_lineage(validated_checkpoint.evidence_lineage, bundle)
@@ -194,9 +199,15 @@ def evaluate_checkpoint(
 
     known_records = _evaluate_dataset(backend, known_dataset, known_manifest)
     unknown_records = _evaluate_dataset(backend, unknown_dataset, unknown_manifest)
+    provenance_keys = ("torchVersion", "hipVersion", "device", "deviceName")
     provenance = {
         "backend": "torch",
         "device": str(backend.device),
+        "trainingAccelerator": {
+            key: backend.loaded_checkpoint.training_summary[key]
+            for key in provenance_keys
+        },
+        "evaluationAccelerator": accelerator_provenance(backend.torch, backend.device),
         "checkpointSha256": _sha256_file(checkpoint_path),
         "inventorySha256": bundle.inventory_sha256,
         "manifestSha256": dict(bundle.manifest_sha256),

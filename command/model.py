@@ -4,6 +4,21 @@ from functools import lru_cache
 from typing import Any
 
 PARAMETER_CAP = 150_000
+FIXED_CLIP_FRAMES = 125
+
+
+def normalize_clip_length(frames: Any) -> Any:
+    """Pad or truncate one [T, 96, 96] clip to the model's temporal contract."""
+    import torch
+
+    if frames.ndim != 3 or tuple(frames.shape[1:]) != (96, 96):
+        raise ValueError("frames must have shape [T, 96, 96]")
+    if frames.shape[0] < 1:
+        raise ValueError("frames must contain at least one timestep")
+    if frames.shape[0] >= FIXED_CLIP_FRAMES:
+        return frames[:FIXED_CLIP_FRAMES]
+    missing = FIXED_CLIP_FRAMES - frames.shape[0]
+    return torch.cat((frames, frames[-1:].repeat(missing, 1, 1)), dim=0)
 
 
 @lru_cache(maxsize=1)

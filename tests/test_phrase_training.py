@@ -244,6 +244,23 @@ def test_rocm_guard_accepts_hip_cuda_zero():
     assert require_rocm(fake) == "cuda:0"
 
 
+def test_accelerator_provenance_records_rocm_runtime_details():
+    from command import training
+
+    fake = SimpleNamespace(
+        __version__="2.7.1+rocm6.3",
+        version=SimpleNamespace(hip="6.3"),
+        cuda=SimpleNamespace(get_device_name=lambda index: f"AMD Radeon {index}"),
+    )
+
+    assert training.accelerator_provenance(fake, "cuda:0") == {
+        "torchVersion": "2.7.1+rocm6.3",
+        "hipVersion": "6.3",
+        "device": "cuda:0",
+        "deviceName": "AMD Radeon 0",
+    }
+
+
 def test_training_checks_rocm_before_reading_catalog_or_samples(monkeypatch, tmp_path):
     fake = SimpleNamespace(
         version=SimpleNamespace(hip=None),
@@ -305,7 +322,9 @@ def test_centroids_reject_a_class_without_training_embeddings():
         compute_class_centroids(torch.tensor([[1.0, 0.0]]), torch.tensor([0]), 2)
 
 
-def test_manifest_dataset_loads_only_listed_npy_and_repeats_final_frame(tmp_path):
+def test_manifest_dataset_loads_only_listed_npy_and_normalizes_fixed_clip_length(
+    tmp_path,
+):
     torch = pytest.importorskip("torch")
     from command.training import pad_clip_batch
 
@@ -342,9 +361,36 @@ def test_manifest_dataset_loads_only_listed_npy_and_repeats_final_frame(tmp_path
     dataset = ManifestDataset(manifest, {"a": 0, "b": 1})
     frames, labels = pad_clip_batch([dataset[0], dataset[1]])
 
-    assert frames.shape == (2, 3, 96, 96)
+    assert frames.shape == (2, 125, 96, 96)
     assert labels.tolist() == [0, 1]
     assert torch.equal(frames[0, -1], frames[0, -2])
+
+
+def test_clip_logits_and_embeddings_do_not_depend_on_longer_batch_peer():
+    # Catches batch-maximum padding changing a short clip's temporal input and
+    # therefore its calibrated logits and embedding.
+    torch = pytest.importorskip("torch")
+    from command.model import build_fixed_phrase_model
+    from command.training import pad_clip_batch
+
+    torch.manual_seed(17)
+    model = build_fixed_phrase_model(4).eval()
+    short = (
+        torch.arange(3 * 96 * 96, dtype=torch.float32).reshape(3, 96, 96) % 256
+    )
+    longer = torch.flip(
+        torch.arange(7 * 96 * 96, dtype=torch.float32).reshape(7, 96, 96) % 256,
+        dims=(0,),
+    )
+    alone, _ = pad_clip_batch([(short, 0)])
+    with_peer, _ = pad_clip_batch([(short, 0), (longer, 1)])
+
+    with torch.inference_mode():
+        alone_logits, alone_embedding = model(alone)
+        mixed_logits, mixed_embedding = model(with_peer)
+
+    torch.testing.assert_close(alone_logits[0], mixed_logits[0])
+    torch.testing.assert_close(alone_embedding[0], mixed_embedding[0])
 
 
 def test_seeded_training_augmentation_is_reproducible():
@@ -460,3 +506,9 @@ def test_rocm_training_writes_checkpoint_and_external_run_summary(tmp_path):
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     assert checkpoint["decisionThresholds"]["minProbability"] == 0.85
     assert tuple(checkpoint["classCentroids"].shape) == (len(catalog.entries), 64)
+    assert checkpoint["trainingSummary"]["torchVersion"] == str(torch.__version__)
+    assert checkpoint["trainingSummary"]["hipVersion"] == str(torch.version.hip)
+    assert checkpoint["trainingSummary"]["device"] == "cuda:0"
+    assert checkpoint["trainingSummary"]["deviceName"] == str(
+        torch.cuda.get_device_name(0)
+    )

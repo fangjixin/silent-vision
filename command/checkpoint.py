@@ -12,7 +12,7 @@ from typing import Any
 
 from command.catalog import PhraseCatalog, catalog_sha256
 from command.dataset import MANIFEST_ROLES
-from command.model import PARAMETER_CAP
+from command.model import FIXED_CLIP_FRAMES, PARAMETER_CAP
 
 SCHEMA_VERSION = "silent-vision.fixed-phrase.v2"
 DECISION_POLICY = {
@@ -104,6 +104,8 @@ def validate_phrase_checkpoint_schema(
     )
     if feature_config["fps"] != 25:
         raise ValueError("featureConfig fps must be 25")
+    if feature_config.get("frames") != FIXED_CLIP_FRAMES:
+        raise ValueError(f"featureConfig frames must be {FIXED_CLIP_FRAMES}")
     expected_spatial_config = {"height": 96, "width": 96, "downsample": 16}
     for key, expected in expected_spatial_config.items():
         if feature_config[key] != expected:
@@ -152,11 +154,38 @@ def validate_phrase_checkpoint_schema(
 
     evidence_lineage = _validate_evidence_lineage(payload["evidenceLineage"], catalog)
     training_summary = dict(_mapping(payload["trainingSummary"], "trainingSummary"))
+    _require_keys(
+        training_summary,
+        {"torchVersion", "hipVersion", "device", "deviceName"},
+        "trainingSummary",
+    )
+    training_summary["torchVersion"] = _non_blank_string(
+        training_summary["torchVersion"], "trainingSummary torchVersion"
+    )
+    hip_version = training_summary["hipVersion"]
+    if hip_version is not None:
+        hip_version = _non_blank_string(
+            hip_version, "trainingSummary hipVersion"
+        )
+    training_summary["hipVersion"] = hip_version
+    device = _non_blank_string(training_summary["device"], "trainingSummary device")
+    if device not in {"cpu", "cuda:0"}:
+        raise ValueError("trainingSummary device must be cpu or cuda:0")
+    training_summary["device"] = device
+    training_summary["deviceName"] = _non_blank_string(
+        training_summary["deviceName"], "trainingSummary deviceName"
+    )
     if training_summary.get("seed") != evidence_lineage["seed"]:
         raise ValueError("trainingSummary seed must match evidenceLineage seed")
     if training_summary.get("evidentiary") is not evidence_lineage["evidentiary"]:
         raise ValueError(
             "trainingSummary evidentiary must match evidenceLineage evidentiary"
+        )
+    if evidence_lineage["evidentiary"] and (
+        training_summary["hipVersion"] is None or training_summary["device"] != "cuda:0"
+    ):
+        raise ValueError(
+            "evidentiary trainingSummary requires ROCm/HIP device cuda:0"
         )
     return ValidatedPhraseCheckpointSchema(
         catalog=catalog,
@@ -317,6 +346,12 @@ def _positive_integer(value: Any, name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise ValueError(f"{name} must be a positive integer")
     return value
+
+
+def _non_blank_string(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-blank string")
+    return value.strip()
 
 
 def _finite_number(value: Any, name: str) -> float:

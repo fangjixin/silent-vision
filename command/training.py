@@ -18,9 +18,11 @@ from command.checkpoint import DECISION_POLICY, SCHEMA_VERSION, save_phrase_chec
 from command.dataset import validate_dataset_bundle
 from command.language import score_language_candidates, validate_recognition_language
 from command.model import (
+    FIXED_CLIP_FRAMES,
     PARAMETER_CAP,
     build_fixed_phrase_model,
     count_trainable_parameters,
+    normalize_clip_length,
 )
 
 BATCH_SIZE = 4
@@ -44,6 +46,16 @@ def require_rocm(torch_module) -> str:
     if not torch_module.cuda.is_available() or torch_module.cuda.device_count() < 1:
         raise RuntimeError("ROCm device cuda:0 is not available")
     return "cuda:0"
+
+
+def accelerator_provenance(torch_module, device: str) -> dict[str, str | None]:
+    hip_version = getattr(torch_module.version, "hip", None)
+    return {
+        "torchVersion": str(torch_module.__version__),
+        "hipVersion": str(hip_version) if hip_version is not None else None,
+        "device": str(device),
+        "deviceName": str(torch_module.cuda.get_device_name(0)),
+    }
 
 
 def compute_class_centroids(embeddings, labels, class_count: int):
@@ -246,14 +258,10 @@ def pad_clip_batch(batch):
 
     if not batch:
         raise ValueError("cannot pad an empty batch")
-    maximum_frames = max(frames.shape[0] for frames, _ in batch)
     padded = []
     labels = []
     for frames, label in batch:
-        missing = maximum_frames - frames.shape[0]
-        if missing:
-            frames = torch.cat((frames, frames[-1:].repeat(missing, 1, 1)), dim=0)
-        padded.append(frames)
+        padded.append(normalize_clip_length(frames))
         labels.append(label)
     return torch.stack(padded), torch.tensor(labels, dtype=torch.long)
 
@@ -373,8 +381,10 @@ def train_phrase_classifier(
         training_records=training_records,
     )
     evidentiary = bool(inventory_evidentiary and calibration["evidentiary"])
+    accelerator = accelerator_provenance(torch, device)
 
     training_summary = {
+        **accelerator,
         "seed": seed,
         "catalogSha256": catalog_digest,
         "inventorySha256": bundle.inventory_sha256,
@@ -393,7 +403,13 @@ def train_phrase_classifier(
         },
         "phraseIds": list(phrase_ids),
         "phraseCatalog": catalog_records(catalog),
-        "featureConfig": {"fps": 25, "height": 96, "width": 96, "downsample": 16},
+        "featureConfig": {
+            "fps": 25,
+            "frames": FIXED_CLIP_FRAMES,
+            "height": 96,
+            "width": 96,
+            "downsample": 16,
+        },
         "modelConfig": {"embeddingDim": 64, "parameterCap": PARAMETER_CAP},
         "decisionPolicy": dict(DECISION_POLICY),
         "decisionThresholds": {
@@ -407,10 +423,6 @@ def train_phrase_classifier(
     checkpoint_digest = save_phrase_checkpoint(Path(output_path), payload)
     run_summary = {
         "checkpointSha256": checkpoint_digest,
-        "torchVersion": str(torch.__version__),
-        "hipVersion": str(torch.version.hip),
-        "device": device,
-        "deviceName": str(torch.cuda.get_device_name(0)),
         **training_summary,
     }
     _write_json_atomic(Path(run_summary_path), run_summary)

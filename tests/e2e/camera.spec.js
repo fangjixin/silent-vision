@@ -29,14 +29,21 @@ const staleHttpCatalog = [
 
 async function installRecordingFakes(page, {
   readyDelayMs = null,
+  serverErrorStage = null,
   websocketCatalog = phraseCatalog,
 } = {}) {
-  await page.addInitScript(({ catalog, readyDelayMs: delayMs }) => {
+  await page.addInitScript(({ catalog, readyDelayMs: delayMs, serverErrorStage: errorStage }) => {
     window.sentWebSocketMessages = [];
     window.recordingTestCounters = {
       sessionRequests: 0,
       websocketConnections: 0,
       cameraRequests: 0,
+    };
+    window.operationErrorCounters = {
+      binaryUploads: 0,
+      cameraStops: 0,
+      clipReceivedEvents: 0,
+      socketCloses: 0,
     };
     const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
@@ -76,9 +83,40 @@ async function installRecordingFakes(page, {
 
       send(message) {
         window.sentWebSocketMessages.push(message);
+        if (message instanceof Blob) {
+          window.operationErrorCounters.binaryUploads += 1;
+          if (errorStage === "after-received") {
+            Promise.resolve().then(() => {
+              window.operationErrorCounters.clipReceivedEvents += 1;
+              this.onmessage?.({
+                data: JSON.stringify({ type: "clip.received", bytes: message.size }),
+              });
+              this.onmessage?.({
+                data: JSON.stringify({
+                  type: "error",
+                  code: "INTERNAL_ERROR",
+                  message: "command clip processing failed",
+                  recoverable: true,
+                }),
+              });
+            });
+          }
+          return;
+        }
+        if (errorStage === "before-upload" && JSON.parse(message).type === "clip.start") {
+          Promise.resolve().then(() => this.onmessage?.({
+            data: JSON.stringify({
+              type: "error",
+              code: "INVALID_REQUEST",
+              message: "clip request rejected",
+              recoverable: true,
+            }),
+          }));
+        }
       }
 
       close() {
+        window.operationErrorCounters.socketCloses += 1;
         this.readyState = 3;
       }
     }
@@ -88,7 +126,16 @@ async function installRecordingFakes(page, {
       configurable: true,
       value: async () => {
         window.recordingTestCounters.cameraRequests += 1;
-        return new MediaStream();
+        const stream = new MediaStream();
+        Object.defineProperty(stream, "getTracks", {
+          configurable: true,
+          value: () => [{
+            stop: () => {
+              window.operationErrorCounters.cameraStops += 1;
+            },
+          }],
+        });
+        return stream;
       },
     });
     HTMLMediaElement.prototype.play = async () => {};
@@ -110,7 +157,7 @@ async function installRecordingFakes(page, {
         this.onstop?.();
       }
     };
-  }, { catalog: websocketCatalog, readyDelayMs });
+  }, { catalog: websocketCatalog, readyDelayMs, serverErrorStage });
 }
 
 async function routePhraseCatalog(page, { catalog = phraseCatalog, status = 200 } = {}) {
@@ -139,6 +186,10 @@ async function deferPhraseCatalog(page, { catalog = staleHttpCatalog, status = 2
 
 async function recordingCounters(page) {
   return page.evaluate(() => window.recordingTestCounters);
+}
+
+async function operationErrorCounters(page) {
+  return page.evaluate(() => window.operationErrorCounters);
 }
 
 async function phraseOptionValues(page) {
@@ -275,6 +326,58 @@ test("preloads phrases without starting a session, socket, or camera", async ({ 
     websocketConnections: 0,
     cameraRequests: 0,
   });
+});
+
+test("recovers from a server error before clip upload", async ({ page }) => {
+  await routePhraseCatalog(page);
+  await installRecordingFakes(page, { serverErrorStage: "before-upload" });
+  await page.goto("http://127.0.0.1:8000/");
+
+  await page.locator("#startButton").click();
+
+  await expect(page.locator("#visionStatus")).toHaveText(
+    "INVALID_REQUEST: clip request rejected",
+  );
+  await expect(page.locator("#cameraStatus")).toHaveText("stopped");
+  await expect(page.locator("#socketStatus")).toHaveText("closed");
+  await expect(page.locator("#startButton")).toBeEnabled();
+  await expect(page.locator("#stopButton")).toBeDisabled();
+  await expect.poll(() => operationErrorCounters(page)).toEqual({
+    binaryUploads: 0,
+    cameraStops: 1,
+    clipReceivedEvents: 0,
+    socketCloses: 1,
+  });
+  await page.waitForTimeout(50);
+  await expect(page.locator("#visionStatus")).toHaveText(
+    "INVALID_REQUEST: clip request rejected",
+  );
+});
+
+test("recovers from a server error after clip.received", async ({ page }) => {
+  await routePhraseCatalog(page);
+  await installRecordingFakes(page, { serverErrorStage: "after-received" });
+  await page.goto("http://127.0.0.1:8000/");
+
+  await page.locator("#startButton").click();
+
+  await expect(page.locator("#visionStatus")).toHaveText(
+    "INTERNAL_ERROR: command clip processing failed",
+  );
+  await expect(page.locator("#cameraStatus")).toHaveText("stopped");
+  await expect(page.locator("#socketStatus")).toHaveText("closed");
+  await expect(page.locator("#startButton")).toBeEnabled();
+  await expect(page.locator("#stopButton")).toBeDisabled();
+  await expect.poll(() => operationErrorCounters(page)).toEqual({
+    binaryUploads: 1,
+    cameraStops: 1,
+    clipReceivedEvents: 1,
+    socketCloses: 1,
+  });
+  await page.waitForTimeout(50);
+  await expect(page.locator("#visionStatus")).toHaveText(
+    "INTERNAL_ERROR: command clip processing failed",
+  );
 });
 
 test("keeps calibration disabled when phrase loading fails", async ({ page }) => {

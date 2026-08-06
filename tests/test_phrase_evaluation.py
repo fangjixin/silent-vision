@@ -249,7 +249,7 @@ def rocm_evaluation_artifacts(tmp_path_factory):
         build_dataset_manifests,
         validate_dataset_bundle,
     )
-    from command.model import build_fixed_phrase_model
+    from command.model import build_fixed_phrase_model, normalize_clip_length
 
     root = tmp_path_factory.mktemp("phrase-evaluation")
     project_root = Path(__file__).resolve().parents[1]
@@ -324,7 +324,8 @@ def rocm_evaluation_artifacts(tmp_path_factory):
     with torch.no_grad():
         model.classifier.weight.zero_()
         model.classifier.bias.copy_(torch.tensor([10.0, -10.0, 10.0, -10.0]))
-        _, embedding = model(torch.from_numpy(clip).unsqueeze(0))
+        normalized_clip = normalize_clip_length(torch.from_numpy(clip))
+        _, embedding = model(normalized_clip.unsqueeze(0))
     checkpoint = root / "fixed-phrase.pt"
     save_phrase_checkpoint(
         checkpoint,
@@ -335,6 +336,7 @@ def rocm_evaluation_artifacts(tmp_path_factory):
             "phraseCatalog": catalog_records(catalog),
             "featureConfig": {
                 "fps": 25,
+                "frames": 125,
                 "height": 96,
                 "width": 96,
                 "downsample": 16,
@@ -354,7 +356,14 @@ def rocm_evaluation_artifacts(tmp_path_factory):
                 [embedding, -embedding, embedding, -embedding], dim=0
             ),
             "evidenceLineage": bundle.checkpoint_lineage(),
-            "trainingSummary": {"seed": 17, "evidentiary": True},
+            "trainingSummary": {
+                "seed": 17,
+                "evidentiary": True,
+                "torchVersion": str(torch.__version__),
+                "hipVersion": str(torch.version.hip),
+                "device": "cuda:0",
+                "deviceName": str(torch.cuda.get_device_name(0)),
+            },
         },
     )
     return {
@@ -372,6 +381,7 @@ def rocm_evaluation_artifacts(tmp_path_factory):
 def test_checkpoint_evaluation_uses_resolved_checkpoint_thresholds_and_hashes(
     rocm_evaluation_artifacts,
 ):
+    torch = pytest.importorskip("torch")
     paths = rocm_evaluation_artifacts
     output = paths["root"] / "evaluation.json"
 
@@ -416,6 +426,14 @@ def test_checkpoint_evaluation_uses_resolved_checkpoint_thresholds_and_hashes(
         "lineageVerified": True,
         "thresholdsFrozen": True,
     }
+    expected_accelerator = {
+        "torchVersion": str(torch.__version__),
+        "hipVersion": str(torch.version.hip),
+        "device": "cuda:0",
+        "deviceName": str(torch.cuda.get_device_name(0)),
+    }
+    assert report["trainingAccelerator"] == expected_accelerator
+    assert report["evaluationAccelerator"] == expected_accelerator
     assert json.loads(output.read_text(encoding="utf-8")) == report
 
 

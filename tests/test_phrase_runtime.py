@@ -89,7 +89,7 @@ def mouth_clip():
 def backend_factory(tmp_path, monkeypatch, mouth_clip):
     torch = pytest.importorskip("torch")
     from command.checkpoint import save_phrase_checkpoint
-    from command.model import build_fixed_phrase_model
+    from command.model import build_fixed_phrase_model, normalize_clip_length
 
     def build(
         *,
@@ -101,7 +101,8 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
         with torch.no_grad():
             model.classifier.weight.zero_()
             model.classifier.bias.copy_(torch.tensor(classifier_bias))
-            _, embedding = model(torch.from_numpy(mouth_clip).unsqueeze(0))
+            normalized_clip = normalize_clip_length(torch.from_numpy(mouth_clip))
+            _, embedding = model(normalized_clip.unsqueeze(0))
         first_centroid = -embedding if reject_by_distance else embedding
         checkpoint = tmp_path / f"phrase-{reject_by_distance}.pt"
         phrase_catalog = [
@@ -148,6 +149,7 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
                 "phraseCatalog": phrase_catalog,
                 "featureConfig": {
                     "fps": 25,
+                    "frames": 125,
                     "height": 96,
                     "width": 96,
                     "downsample": 16,
@@ -181,7 +183,16 @@ def backend_factory(tmp_path, monkeypatch, mouth_clip):
                     },
                     "evidentiary": False,
                 },
-                "trainingSummary": {"seed": 17, "evidentiary": False},
+                "trainingSummary": {
+                    "seed": 17,
+                    "evidentiary": False,
+                    "torchVersion": str(torch.__version__),
+                    "hipVersion": str(torch.version.hip)
+                    if torch.version.hip is not None
+                    else None,
+                    "device": "cpu",
+                    "deviceName": "synthetic CPU test fixture",
+                },
             },
         )
         monkeypatch.setattr(
