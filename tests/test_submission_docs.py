@@ -10,6 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTEST_PREFIX = "submissions/track1-silent-vision/"
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 SCRIPT_REFERENCE = re.compile(r"(?<![\w/])(scripts/[A-Za-z0-9_.-]+)")
+POSTER_SCENE_PATHS = (
+    ROOT / "submission/assets/poster/post-surgery.png",
+    ROOT / "submission/assets/poster/rehabilitation.png",
+    ROOT / "submission/assets/poster/accessible-communication.png",
+    ROOT / "submission/assets/poster/silent-control-input.png",
+)
 
 
 def _relative_markdown_links(path: Path) -> list[Path]:
@@ -173,3 +179,15 @@ def test_poster_png_is_a_full_size_a3_render():
         assert width >= 1700
         assert height >= 2400
         assert height / width == pytest.approx(2**0.5, rel=0.01)
+
+
+def test_poster_scene_sources_are_repository_owned_landscape_pngs():
+    for path in POSTER_SCENE_PATHS:
+        assert path.is_file(), path
+        with Image.open(path) as image:
+            width, height = image.size
+            assert image.format == "PNG"
+            assert image.mode in {"RGB", "RGBA"}
+            assert width >= 1400
+            assert height >= 900
+            assert width / height == pytest.approx(1.5, rel=0.12)
