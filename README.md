@@ -11,11 +11,12 @@ grayscale mouth sequence. The official classifier then trains and runs in
 PyTorch on AMD Radeon through ROCm. An accepted result gets its exact text and
 business intent from the registered phrase catalog.
 
-The final Radeon run, evaluation report, and recorded demonstration are still
-pending. English recordings and bilingual training do not yet exist, so this
-repository does not claim bilingual accuracy (or any accuracy, latency,
-throughput, or memory figure). A run built with `--allow-small-dataset` is
-non-evidentiary and proves pipeline execution only.
+The official Radeon run completed on 2026-08-06 with 73 known clips and 15
+unrelated clips. The frozen final evaluation achieved 12/12 phrase top-1
+accuracy, accepted 5/12 known clips, and rejected 9/10 unrelated clips; one
+unrelated clip was falsely accepted. These are personalized, same-speaker,
+fixed-phrase results, not an open-vocabulary or cross-speaker claim. The recorded
+demonstration is included with contest PR #293.
 
 Repository: <https://github.com/fangjixin/silent-vision>
 

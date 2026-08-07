@@ -139,7 +139,6 @@ def test_profile_assets_describe_bilingual_language_routing():
         assert "Have you eaten?" in text
         assert "user selects the language" in text.lower()
         assert "selected-language softmax" in text.lower()
-        assert "no bilingual accuracy" in text.lower()
 
 
 def test_poster_assets_use_the_approved_human_centered_copy():

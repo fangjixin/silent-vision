@@ -1,6 +1,7 @@
 # Silent Vision Demo Video Script
 
-Status: pending recording on AMD Radeon. Target length: 3-5 minutes.
+Status: official Radeon training, evaluation, and video recording complete.
+Target length: 3-5 minutes.
 
 This script demonstrates the application that exists in the repository: one
 silent clip in a user-selected language, one fixed-phrase decision, and an
@@ -130,8 +131,10 @@ hashes, checkpoint hash, backend, and device.”
 building, Radeon training, checkpoint loading, and inference execute end to end.
 It does not support an accuracy or rejection-rate claim.”
 
-Do not claim bilingual accuracy in this recording: English recordings, bilingual
-training, and the final evaluation report must exist first.
+For this official run, show the measured counts rather than saying evidence is
+pending: 12/12 phrase top-1 accuracy, 5/12 known acceptance, 5/5 accepted known
+phrase accuracy, 9/10 unrelated rejection, and 5/6 accepted precision. State
+that these are personalized, same-speaker fixed-phrase results.
 
 **Close:**
 

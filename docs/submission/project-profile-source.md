@@ -165,6 +165,29 @@ the repository README and Radeon runbook. Private recordings and checkpoints
 remain outside Git; the public bundle contains source, catalog, documentation,
 profile, poster, and demo script.
 
-Pending: English recordings, bilingual training, the official Radeon run, final
-evaluation report, and recorded demonstration. No bilingual accuracy claim is
-made before that final report. Small-data smoke artifacts are non-evidentiary.
+## 7. Measured Radeon Evidence
+
+The official run completed on 2026-08-06 with 73 known clips across the four
+registered phrases and 15 unrelated clips split across Chinese and English. The
+inventory, checkpoint, and final report are all marked `evidentiary: true`; the
+final evaluator verified the complete manifest lineage and used frozen
+checkpoint thresholds.
+
+On the untouched final partitions, phrase top-1 accuracy was 12/12 (100%) and
+mapped-intent accuracy was 12/12 (100%). Five of 12 known clips passed both
+acceptance gates; all five accepted known clips had the correct phrase. Nine of
+10 unrelated clips were rejected, while one was falsely accepted, giving 5/6
+(83.3%) accepted precision across accepted known and unrelated clips.
+
+Training and evaluation ran with PyTorch 2.9.1 on ROCm HIP 7.2 using `cuda:0`
+on one `gfx1100` AMD GPU. The trained model has 46,405 parameters. The frozen
+checkpoint SHA-256 is
+`c70d28ae2ed84ee4b2cb0811ebff18870e7b905c1540bc96a782656fba385453`.
+A real WebSocket test replayed an untouched Chinese light-on clip through the
+complete video pipeline and returned the exact registered sentence with
+`backend: torch`, `device: cuda:0`, `accepted: true`, and `action: execute`.
+
+These are small, personalized, same-speaker fixed-phrase results. They do not
+establish open-vocabulary lipreading, cross-speaker generalization, or guaranteed
+rejection of arbitrary unseen phrases. The recorded demonstration is included
+with contest PR #293.

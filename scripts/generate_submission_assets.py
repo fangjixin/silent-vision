@@ -46,10 +46,9 @@ POSTER_SCENES = (
     ),
 )
 PROFILE_EVIDENCE_STATUS = (
-    "Pending: English recordings, bilingual training, the official Radeon run, "
-    "final evaluation report, and recorded demonstration. No bilingual accuracy "
-    "claim is made before that final report. Small-data smoke artifacts are "
-    "non-evidentiary."
+    "Official Radeon evidence: 12/12 phrase top-1, 5/12 known accepted, "
+    "5/5 accepted known phrases correct, and 9/10 unrelated clips rejected. "
+    "Inventory, checkpoint, and report lineage are evidentiary and verified."
 )
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 CJK_FONT = "STSong-Light"
@@ -77,7 +76,7 @@ def _read_reviewed_copy() -> tuple[str, str]:
                 "Have you eaten?",
                 "user selects the language",
                 "selected-language softmax",
-                "No bilingual accuracy",
+                "Measured Radeon Evidence",
             ],
         ),
         "poster": (
@@ -298,10 +297,10 @@ def _profile_page_one(pdf: canvas.Canvas) -> None:
     )
     pdf.setFillColor(PALE_RED)
     pdf.roundRect(42, 102, width - 84, 64, 9, fill=1, stroke=0)
-    _label(pdf, "Pending", 58, 144)
+    _label(pdf, "Radeon evidence", 58, 144)
     _paragraph(
         pdf,
-        "English recordings, bilingual training, final evaluation, and the recorded demo remain pending. No bilingual accuracy claim yet.",
+        "Frozen final evaluation: 12/12 phrase top-1, 5/12 known accepted, and 9/10 unrelated clips rejected. Personalized same-speaker scope.",
         58,
         122,
         width - 116,
@@ -565,10 +564,10 @@ def _profile_page_six(pdf: canvas.Canvas) -> None:
         size=9.7,
         leading=13.5,
     )
-    _label(pdf, "Next steps", 42, 207)
+    _label(pdf, "Run identity", 42, 207)
     _paragraph(
         pdf,
-        "1. Meet the official sample gate.   2. Build hashed manifests.   3. Train and calibrate on Radeon.   4. Evaluate untouched final partitions.   5. Record the demo.",
+        "PyTorch 2.9.1 | ROCm HIP 7.2 | cuda:0 | gfx1100 | 46,405 parameters | checkpoint c70d28ae2ed84ee4b2cb0811ebff18870e7b905c1540bc96a782656fba385453",
         42,
         180,
         width - 84,

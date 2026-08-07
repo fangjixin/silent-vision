@@ -48,9 +48,24 @@ with a creator workflow, but that integration is not claimed here.
 
 ## Evidence status
 
-English recordings, bilingual training, the official Radeon run, untouched final
-evaluation, and recorded demo remain pending. Official evidence requires 15
-independent takes for each of the four phrases plus at least 15 unrelated clips
-spanning both selected languages. A small-data run may be used only to prove that
-the pipeline executes. This pull request does not claim bilingual accuracy,
-latency, throughput, or memory results before the final report exists.
+The official Radeon run completed on 2026-08-06. Its evidentiary inventory
+contains 73 known clips and 15 unrelated clips across Chinese and English. The
+frozen untouched evaluation produced:
+
+- phrase top-1 accuracy: 12/12 (100%);
+- mapped-intent accuracy: 12/12 (100%);
+- known acceptance: 5/12 (41.7%);
+- accepted known phrase accuracy: 5/5 (100%);
+- unrelated rejection: 9/10 (90%); and
+- accepted precision including the one unrelated false accept: 5/6 (83.3%).
+
+Training and evaluation used PyTorch 2.9.1, ROCm HIP 7.2, `cuda:0`, and one
+`gfx1100` AMD GPU. The model has 46,405 parameters. Checkpoint SHA-256:
+`c70d28ae2ed84ee4b2cb0811ebff18870e7b905c1540bc96a782656fba385453`.
+The inventory, checkpoint, and final report are all evidentiary and their lineage
+was verified. A real WebSocket replay also returned the exact Chinese light-on
+phrase with the Torch backend on `cuda:0` and `action: execute`.
+
+These are personalized, same-speaker fixed-phrase results, not evidence of
+open-vocabulary lipreading or cross-speaker generalization. The 720p recorded
+demo is included in contest PR #293.

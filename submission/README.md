@@ -26,14 +26,15 @@ It is not open-vocabulary lipreading.
 | Poster PNG | [`Silent-Vision-Poster.png`](Silent-Vision-Poster.png) | Complete |
 | Poster source copy | [`../docs/submission/poster-copy.md`](../docs/submission/poster-copy.md) | Complete |
 | Demo script and shot checklist | [`demo-video-script.md`](demo-video-script.md) | Ready for recording |
-| Demo video | External URL to be added after recording | Pending |
-| Pull request description | [`pull-request-description.md`](pull-request-description.md) | Ready; demo link pending |
+| Demo video | [720p MP4 in contest PR #293](https://github.com/fangjixin/Radeon-hackathon-2026-07/blob/submission/track1-silent-vision/submissions/track1-silent-vision/submission/Silent-Vision-Demo-720p.mp4) | Included |
+| Pull request description | [`pull-request-description.md`](pull-request-description.md) | Submitted |
 
-The source, catalog, documentation, and generated assets are present. English
-recordings, bilingual training, the official Radeon run, final evaluation report,
-and video are still pending. No bilingual accuracy or other performance number
-is claimed until the final report exists. If only a small-data smoke is
-available, it must be described as proof of execution rather than evaluation.
+The source, catalog, documentation, and generated assets are present. The
+official bilingual Radeon run and frozen final evaluation completed on
+2026-08-06 with evidentiary lineage verified. The untouched final partitions
+produced 12/12 phrase top-1 accuracy, 5/12 known acceptance, and 9/10 unrelated
+rejection. These are personalized, same-speaker fixed-phrase results. The demo
+video is included with contest PR #293.
 
 Recordings, checkpoints, and private reports are intentionally excluded from the
 public contest bundle.
